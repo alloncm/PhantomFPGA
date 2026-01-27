@@ -123,7 +123,7 @@ jobs:
         uses: actions/cache@v4
         with:
           path: platform/buildroot/output/${{ matrix.arch }}
-          key: buildroot-${{ matrix.arch }}-${{ env.BUILDROOT_VERSION }}-${{ hashFiles('platform/buildroot/configs/**') }}
+          key: buildroot-${{ matrix.arch }}-${{ env.BUILDROOT_VERSION }}-${{ hashFiles('platform/buildroot/configs/**', 'platform/buildroot/overlay/**') }}
           restore-keys: |
             buildroot-${{ matrix.arch }}-${{ env.BUILDROOT_VERSION }}-
 
