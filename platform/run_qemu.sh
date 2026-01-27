@@ -283,7 +283,7 @@ build_qemu_cmd() {
     cmd+=(-append "root=/dev/vda console=${CONSOLE}")
 
     # PhantomFPGA PCIe device - the star of the show
-    cmd+=(-device phantomfpga-pcie)
+    cmd+=(-device phantomfpga)
 
     # Networking: user-mode with SSH port forwarding
     cmd+=(-netdev "user,id=net0,hostfwd=tcp::${SSH_PORT}-:22")
