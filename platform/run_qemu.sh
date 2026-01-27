@@ -121,7 +121,7 @@ setup_arch_paths() {
             KERNEL_IMAGE="${PROJECT_ROOT}/platform/images/bzImage"
             ROOTFS_IMAGE="${PROJECT_ROOT}/platform/images/rootfs.ext4"
             MACHINE_TYPE="q35"
-            CPU_TYPE="qemu64"
+            CPU_TYPE="Nehalem"
             CONSOLE="ttyS0"
             ;;
         aarch64)
