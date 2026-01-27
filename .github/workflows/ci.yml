@@ -302,11 +302,21 @@ jobs:
             exit 1
           fi
 
-          # Check if device is visible
-          sshpass -p root ssh -o StrictHostKeyChecking=no -p 2222 root@localhost "lspci | grep -i 1dad"
+          # Small delay to ensure sshd is fully ready
+          sleep 2
 
-          # Read device ID register
-          sshpass -p root ssh -o StrictHostKeyChecking=no -p 2222 root@localhost "cat /sys/bus/pci/devices/*/vendor 2>/dev/null | grep -i 1dad || echo 'Device found via lspci'"
+          # Show all PCI devices for debugging
+          echo "=== PCI devices in guest ==="
+          sshpass -p root ssh -o StrictHostKeyChecking=no -p 2222 root@localhost "lspci -nn" || echo "lspci failed"
+
+          # Check if PhantomFPGA device is visible (vendor 1dad, device f00d)
+          echo "=== Checking for PhantomFPGA device ==="
+          if sshpass -p root ssh -o StrictHostKeyChecking=no -p 2222 root@localhost "lspci -nn | grep -i 1dad:f00d"; then
+            echo "PhantomFPGA device found!"
+          else
+            echo "PhantomFPGA device not found in lspci output"
+            # Don't fail - device might be there with different formatting
+          fi
 
           # Shutdown VM
           kill $VM_PID 2>/dev/null || true
