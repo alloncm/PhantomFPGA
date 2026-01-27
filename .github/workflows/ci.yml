@@ -102,7 +102,7 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y \
             build-essential rsync bc cpio unzip wget \
-            libncurses-dev file
+            libncurses-dev file libelf-dev libssl-dev
 
       - name: Cache Buildroot downloads
         uses: actions/cache@v4
