@@ -141,17 +141,8 @@ $(STAMP_CONFIG_X86): $(STAMP_EXTRACT) | $(OUTPUT_X86)
 		BR2_EXTERNAL= \
 		BR2_DL_DIR="$(DL_DIR)" \
 		$(if $(filter 0,$(V)),>/dev/null 2>&1,)
-	@# Patch config to use our local overlay directly
-	$(Q)sed -i 's|BR2_ROOTFS_OVERLAY=.*|BR2_ROOTFS_OVERLAY="$(OVERLAY_DIR)"|' \
-		"$(OUTPUT_X86)/.config"
-	@# Remove BR2_EXTERNAL references since we're not using external tree
-	$(Q)sed -i '/BR2_EXTERNAL/d' "$(OUTPUT_X86)/.config"
-	$(Q)sed -i 's|$$(BR2_EXTERNAL_PHANTOMFPGA_PATH)/||g' "$(OUTPUT_X86)/.config"
-	@# Use default kernel config (we'll customize later if needed)
-	$(Q)sed -i 's|BR2_LINUX_KERNEL_USE_CUSTOM_CONFIG=y|BR2_LINUX_KERNEL_USE_DEFCONFIG=y|' \
-		"$(OUTPUT_X86)/.config"
-	$(Q)sed -i 's|BR2_LINUX_KERNEL_CUSTOM_CONFIG_FILE=.*|BR2_LINUX_KERNEL_DEFCONFIG_NAME="x86_64_defconfig"|' \
-		"$(OUTPUT_X86)/.config"
+	@# Set overlay directory in generated config
+	$(Q)echo 'BR2_ROOTFS_OVERLAY="$(OVERLAY_DIR)"' >> "$(OUTPUT_X86)/.config"
 	@touch $@
 
 #==============================================================================
@@ -167,17 +158,8 @@ $(STAMP_CONFIG_ARM): $(STAMP_EXTRACT) | $(OUTPUT_ARM)
 		BR2_EXTERNAL= \
 		BR2_DL_DIR="$(DL_DIR)" \
 		$(if $(filter 0,$(V)),>/dev/null 2>&1,)
-	@# Patch config to use our local overlay directly
-	$(Q)sed -i 's|BR2_ROOTFS_OVERLAY=.*|BR2_ROOTFS_OVERLAY="$(OVERLAY_DIR)"|' \
-		"$(OUTPUT_ARM)/.config"
-	@# Remove BR2_EXTERNAL references since we're not using external tree
-	$(Q)sed -i '/BR2_EXTERNAL/d' "$(OUTPUT_ARM)/.config"
-	$(Q)sed -i 's|$$(BR2_EXTERNAL_PHANTOMFPGA_PATH)/||g' "$(OUTPUT_ARM)/.config"
-	@# Use default kernel config
-	$(Q)sed -i 's|BR2_LINUX_KERNEL_USE_CUSTOM_CONFIG=y|BR2_LINUX_KERNEL_USE_DEFCONFIG=y|' \
-		"$(OUTPUT_ARM)/.config"
-	$(Q)sed -i 's|BR2_LINUX_KERNEL_CUSTOM_CONFIG_FILE=.*|BR2_LINUX_KERNEL_DEFCONFIG_NAME="defconfig"|' \
-		"$(OUTPUT_ARM)/.config"
+	@# Set overlay directory in generated config
+	$(Q)echo 'BR2_ROOTFS_OVERLAY="$(OVERLAY_DIR)"' >> "$(OUTPUT_ARM)/.config"
 	@touch $@
 
 #==============================================================================

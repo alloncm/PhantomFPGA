@@ -27,8 +27,8 @@ BR2_PACKAGE_HOST_LINUX_HEADERS_CUSTOM_6_6=y
 BR2_LINUX_KERNEL=y
 BR2_LINUX_KERNEL_CUSTOM_VERSION=y
 BR2_LINUX_KERNEL_CUSTOM_VERSION_VALUE="6.6.70"
-BR2_LINUX_KERNEL_USE_CUSTOM_CONFIG=y
-BR2_LINUX_KERNEL_CUSTOM_CONFIG_FILE="$(BR2_EXTERNAL_PHANTOMFPGA_PATH)/board/phantomfpga/linux-aarch64.config"
+BR2_LINUX_KERNEL_USE_DEFCONFIG=y
+BR2_LINUX_KERNEL_DEFCONFIG="defconfig"
 # aarch64 uses Image (not bzImage)
 BR2_LINUX_KERNEL_IMAGE="Image"
 BR2_LINUX_KERNEL_INSTALL_TARGET=y
@@ -110,9 +110,9 @@ BR2_TARGET_ROOTFS_CPIO=y
 BR2_TARGET_ROOTFS_CPIO_GZIP=y
 
 #------------------------------------------------------------------------------
-# Overlay Directory
+# Overlay Directory (set during build via sed in Makefile)
 #------------------------------------------------------------------------------
-BR2_ROOTFS_OVERLAY="$(BR2_EXTERNAL_PHANTOMFPGA_PATH)/overlay"
+# BR2_ROOTFS_OVERLAY is configured at build time
 
 #------------------------------------------------------------------------------
 # Init System
