@@ -1,0 +1,26 @@
+# /etc/fstab - PhantomFPGA Training Environment
+#
+# <filesystem>  <mount point>  <type>  <options>  <dump>  <pass>
+#
+# Root filesystem
+/dev/root       /              auto    rw         0       1
+
+# Proc and sys filesystems
+proc            /proc          proc    defaults   0       0
+sysfs           /sys           sysfs   defaults   0       0
+devpts          /dev/pts       devpts  defaults   0       0
+tmpfs           /tmp           tmpfs   defaults   0       0
+tmpfs           /run           tmpfs   defaults   0       0
+
+# Debug filesystem for tracing
+debugfs         /sys/kernel/debug  debugfs  defaults  0  0
+
+# 9p shared directories from QEMU host
+# These allow editing driver/app source on the host while building in guest
+#
+# Mount tags are defined in run_qemu.sh:
+#   -virtfs local,path=driver,mount_tag=driver_share,security_model=mapped-xattr
+#   -virtfs local,path=app,mount_tag=app_share,security_model=mapped-xattr
+#
+driver_share    /mnt/driver    9p      trans=virtio,version=9p2000.L,msize=104857600,nofail  0  0
+app_share       /mnt/app       9p      trans=virtio,version=9p2000.L,msize=104857600,nofail  0  0

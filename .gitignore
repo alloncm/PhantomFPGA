@@ -1,0 +1,58 @@
+# PhantomFPGA .gitignore
+
+# Built images and artifacts
+platform/images/
+*.img
+*.qcow2
+*.raw
+
+# QEMU build artifacts
+platform/qemu/build/
+platform/qemu/qemu/
+platform/qemu/.stamps/
+
+# Buildroot build artifacts
+platform/buildroot/buildroot/
+platform/buildroot/output/
+platform/buildroot/dl/
+platform/buildroot/.stamps/
+
+# Kernel module build artifacts
+driver/*.o
+driver/*.ko
+driver/*.mod
+driver/*.mod.c
+driver/*.mod.o
+driver/modules.order
+driver/Module.symvers
+driver/.*.cmd
+driver/.tmp_versions/
+
+# Application build artifacts
+app/build/
+app/CMakeCache.txt
+app/CMakeFiles/
+app/cmake_install.cmake
+app/Makefile
+app/phantomfpga_app
+
+# Test artifacts
+tests/unit/*.o
+tests/integration/*.o
+
+# Editor and IDE files
+*.swp
+*.swo
+*~
+.vscode/
+.idea/
+*.sublime-*
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Temporary files
+*.tmp
+*.bak
+*.log

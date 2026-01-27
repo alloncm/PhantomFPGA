@@ -1,0 +1,35 @@
+
+    ____  __                __                   __________  _________
+   / __ \/ /_  ____ _____  / /_____  ____ ___   / ____/ __ \/ ____/   |
+  / /_/ / __ \/ __ `/ __ \/ __/ __ \/ __ `__ \ / /_  / /_/ / / __/ /| |
+ / ____/ / / / /_/ / / / / /_/ /_/ / / / / / // __/ / ____/ /_/ / ___ |
+/_/   /_/ /_/\__,_/_/ /_/\__/\____/_/ /_/ /_//_/   /_/    \____/_/  |_|
+
+================================================================================
+                    FPGA PCIe Driver Development Training
+================================================================================
+
+Your simulated PCIe FPGA device is ready!
+
+QUICK START:
+  1. Build the driver:    cd /mnt/driver && make
+  2. Load the module:     pf-load
+  3. Check it loaded:     pf-status && pf-dev
+  4. Run test app:        phantomfpga_app
+
+USEFUL COMMANDS:
+  pf-load     Load kernel module      pf-unload   Unload module
+  pf-status   Check if loaded         pf-logs     View kernel logs
+  pf-pci      Show PCIe device        pf-test     Rebuild & reload
+  pf-build    Build driver            pf-clean    Clean build
+
+DIRECTORIES:
+  /mnt/driver   Driver source (shared from host)
+  /mnt/app      Test application (shared from host)
+
+The PhantomFPGA device appears at PCI ID 1234:cafe
+Device registers are documented in phantomfpga_regs.h
+
+Happy hacking!
+================================================================================
+

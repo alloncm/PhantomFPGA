@@ -1,0 +1,49 @@
+From: PhantomFPGA Project <phantom@localhost>
+Date: Mon, 27 Jan 2026 00:00:00 +0000
+Subject: [PATCH] hw/misc: add phantomfpga PCIe device
+
+Add PhantomFPGA, a virtual FPGA device for testing DMA ring buffer
+drivers. The device simulates a high-speed frame producer that writes
+data to guest memory via DMA, allowing development and testing of
+zero-copy streaming drivers without real hardware.
+
+Features:
+- PCIe device with MSI-X interrupts
+- Configurable DMA ring buffer for frame streaming
+- Simulated frame generation at configurable rates
+- Host-side watermark interrupts for efficient polling
+
+The device appears as PCI vendor 0x1DAD, device 0xF00D.
+Because every good fake FPGA needs a dad joke in its PCI ID.
+
+Signed-off-by: PhantomFPGA Project <phantom@localhost>
+---
+ hw/misc/Kconfig      | 5 +++++
+ hw/misc/meson.build  | 2 ++
+ 2 files changed, 7 insertions(+)
+
+diff --git a/hw/misc/Kconfig b/hw/misc/Kconfig
+index 000000000..111111111 100644
+--- a/hw/misc/Kconfig
++++ b/hw/misc/Kconfig
+@@ -1,3 +1,8 @@
++config PHANTOMFPGA
++    bool
++    default y if PCI_DEVICES
++    depends on PCI && MSI_NONBROKEN
++
+ config APPLESMC
+     bool
+     depends on ISA_BUS
+diff --git a/hw/misc/meson.build b/hw/misc/meson.build
+index 000000000..111111111 100644
+--- a/hw/misc/meson.build
++++ b/hw/misc/meson.build
+@@ -1,3 +1,5 @@
++system_ss.add(when: 'CONFIG_PHANTOMFPGA', if_true: files('phantomfpga.c'))
++
+ system_ss.add(when: 'CONFIG_APPLESMC', if_true: files('applesmc.c'))
+ system_ss.add(when: 'CONFIG_EDU', if_true: files('edu.c'))
+ system_ss.add(when: 'CONFIG_FW_CFG_DMA', if_true: files('vmcoreinfo.c'))
+--
+2.43.0
