@@ -1,0 +1,9 @@
+# PhantomFPGA Network Configuration
+
+# Loopback interface
+auto lo
+iface lo inet loopback
+
+# Primary network interface (virtio-net in QEMU)
+auto eth0
+iface eth0 inet dhcp
