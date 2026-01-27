@@ -113,7 +113,7 @@ jobs:
       - name: Cache Buildroot build
         uses: actions/cache@v4
         with:
-          path: platform/buildroot/build-${{ matrix.arch }}
+          path: platform/buildroot/output/${{ matrix.arch }}
           key: buildroot-${{ matrix.arch }}-${{ env.BUILDROOT_VERSION }}-${{ hashFiles('platform/buildroot/configs/**') }}
           restore-keys: |
             buildroot-${{ matrix.arch }}-${{ env.BUILDROOT_VERSION }}-

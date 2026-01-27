@@ -189,9 +189,11 @@ build-x86_64: $(STAMP_BUILD_X86)
 $(STAMP_BUILD_X86): $(STAMP_CONFIG_X86) | $(IMAGES_DIR)
 	@echo "$(BLUE)==> Building x86_64 image (this will take a while)...$(NC)"
 	@echo "    Using $(NPROC) parallel jobs"
-	$(Q)$(MAKE) -C "$(BR_DIR)" O="$(OUTPUT_X86)" -j$(NPROC) \
-		BR2_DL_DIR="$(DL_DIR)" \
-		$(if $(filter 0,$(V)),2>&1 | grep -E "^>>>" || true,)
+ifeq ($(V),0)
+	$(Q)$(MAKE) -C "$(BR_DIR)" O="$(OUTPUT_X86)" -j$(NPROC) BR2_DL_DIR="$(DL_DIR)"
+else
+	$(MAKE) -C "$(BR_DIR)" O="$(OUTPUT_X86)" -j$(NPROC) BR2_DL_DIR="$(DL_DIR)"
+endif
 	@echo "$(BLUE)==> Installing x86_64 images...$(NC)"
 	$(Q)cp "$(OUTPUT_X86)/images/$(KERNEL_X86)" "$(IMAGES_DIR)/"
 	$(Q)cp "$(OUTPUT_X86)/images/$(ROOTFS)" "$(IMAGES_DIR)/"
@@ -206,9 +208,11 @@ build-aarch64: $(STAMP_BUILD_ARM)
 $(STAMP_BUILD_ARM): $(STAMP_CONFIG_ARM) | $(IMAGES_DIR)
 	@echo "$(BLUE)==> Building aarch64 image (this will take a while)...$(NC)"
 	@echo "    Using $(NPROC) parallel jobs"
-	$(Q)$(MAKE) -C "$(BR_DIR)" O="$(OUTPUT_ARM)" -j$(NPROC) \
-		BR2_DL_DIR="$(DL_DIR)" \
-		$(if $(filter 0,$(V)),2>&1 | grep -E "^>>>" || true,)
+ifeq ($(V),0)
+	$(Q)$(MAKE) -C "$(BR_DIR)" O="$(OUTPUT_ARM)" -j$(NPROC) BR2_DL_DIR="$(DL_DIR)"
+else
+	$(MAKE) -C "$(BR_DIR)" O="$(OUTPUT_ARM)" -j$(NPROC) BR2_DL_DIR="$(DL_DIR)"
+endif
 	@echo "$(BLUE)==> Installing aarch64 images...$(NC)"
 	$(Q)cp "$(OUTPUT_ARM)/images/$(KERNEL_ARM)" "$(IMAGES_DIR)/"
 	$(Q)cp "$(OUTPUT_ARM)/images/$(ROOTFS)" "$(IMAGES_DIR)/rootfs-aarch64.ext4"
