@@ -254,6 +254,9 @@ parse_args() {
 build_qemu_cmd() {
     local cmd=("${QEMU_BIN}")
 
+    # BIOS/firmware directory (needed when running from build dir)
+    cmd+=(-L "${QEMU_BUILD}/pc-bios")
+
     # Machine type (architecture-specific)
     cmd+=(-machine "${MACHINE_TYPE}")
 
