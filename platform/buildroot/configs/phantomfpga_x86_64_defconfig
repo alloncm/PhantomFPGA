@@ -152,9 +152,9 @@ BR2_TARGET_LOCALTIME="UTC"
 BR2_GENERATE_LOCALE=""
 
 #------------------------------------------------------------------------------
-# Root Password (empty for passwordless login - lab environment only!)
+# Root Password (set to "root" for SSH access - lab environment only!)
 #------------------------------------------------------------------------------
-BR2_TARGET_GENERIC_ROOT_PASSWD=""
+BR2_TARGET_GENERIC_ROOT_PASSWD="root"
 
 #------------------------------------------------------------------------------
 # System Hostname
