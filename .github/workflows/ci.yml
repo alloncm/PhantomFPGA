@@ -74,6 +74,15 @@ jobs:
           ./platform/qemu/build/qemu-system-${{ matrix.arch }} -device help 2>&1 | grep -i phantom
           echo "PhantomFPGA device found!"
 
+      - name: Copy BIOS files to build directory
+        run: |
+          # BIOS files are in QEMU source tree, copy to build for artifact
+          mkdir -p platform/qemu/build/pc-bios
+          cp platform/qemu/qemu/pc-bios/*.bin platform/qemu/build/pc-bios/ 2>/dev/null || true
+          cp platform/qemu/qemu/pc-bios/*.rom platform/qemu/build/pc-bios/ 2>/dev/null || true
+          cp platform/qemu/qemu/pc-bios/efi-* platform/qemu/build/pc-bios/ 2>/dev/null || true
+          ls -la platform/qemu/build/pc-bios/ | head -20
+
       - name: Upload QEMU binary
         uses: actions/upload-artifact@v4
         with:
@@ -247,6 +256,10 @@ jobs:
         run: |
           chmod +x platform/qemu/build/qemu-system-x86_64
           chmod +x platform/run_qemu.sh
+          echo "=== Downloaded QEMU files ==="
+          ls -la platform/qemu/build/
+          echo "=== BIOS files ==="
+          ls -la platform/qemu/build/pc-bios/ || echo "No pc-bios directory"
 
       - name: Install test dependencies
         run: |
