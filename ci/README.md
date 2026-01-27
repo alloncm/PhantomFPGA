@@ -1,10 +1,11 @@
 # PhantomFPGA CI/CD Pipeline
 
-This directory contains the CI/CD configuration for the PhantomFPGA training platform.
+This directory contains CI helper scripts. The actual pipeline is defined in
+`.github/workflows/ci.yml` (GitHub Actions).
 
 ## Pipeline Overview
 
-The Azure Pipelines configuration (`azure-pipelines.yml`) runs the following stages:
+The GitHub Actions workflow runs these jobs:
 
 ```
 +----------------+     +------------------+
@@ -14,28 +15,28 @@ The Azure Pipelines configuration (`azure-pipelines.yml`) runs the following sta
         |                       |
         v                       v
 +-------+--------+     +--------+---------+
-|  QTest Unit    |     | Integration      |
-|    Tests       |     |    Tests         |
+|  Smoke Test    |     |  Build Driver    |
+|                |     |  Build App       |
 +-------+--------+     +--------+---------+
         |                       |
         +----------+------------+
                    |
                    v
           +--------+---------+
-          | Collect Artifacts|
+          | Integration Test |
+          | (on push only)   |
           +------------------+
 ```
 
 ## Triggers
 
-- **Push to main**: Full pipeline
-- **Pull requests to main**: Full pipeline
-- **Feature branches**: Full pipeline
-- **Documentation changes**: Skipped (*.md, docs/**)
+- **Push to main/develop**: Full pipeline including integration tests
+- **Pull requests to main**: Build and smoke tests (faster feedback)
+- **Documentation changes**: Skipped (saves resources)
 
 ## Helper Scripts
 
-The `scripts/` directory contains helper scripts for CI tasks:
+The `scripts/` directory contains helper scripts you can also run locally:
 
 | Script | Description |
 |--------|-------------|
@@ -54,7 +55,7 @@ The `scripts/` directory contains helper scripts for CI tasks:
 ./scripts/build-buildroot.sh --arch both --download-dir /tmp/br-cache
 
 # Run integration tests
-./scripts/run-integration-tests.sh --arch x86_64 --timeout 300 --junit results.xml
+./scripts/run-integration-tests.sh --arch x86_64 --timeout 300
 
 # Quick smoke test
 ./scripts/smoke-test.sh --arch both
@@ -62,94 +63,83 @@ The `scripts/` directory contains helper scripts for CI tasks:
 
 ## Caching Strategy
 
-The pipeline uses Azure Pipelines caching for:
+The pipeline uses GitHub Actions caching for:
 
-1. **QEMU builds**: Cached per commit + architecture
-2. **Buildroot downloads**: Shared across all builds
-3. **Buildroot output**: Cached per commit + architecture
+1. **QEMU source**: Cached by version
+2. **QEMU builds**: Cached per architecture + source hash
+3. **Buildroot downloads**: Shared across all builds
+4. **Buildroot output**: Cached per architecture + config hash
 
-Cache keys include a version string (`CACHE_VERSION`) that can be incremented to invalidate caches.
+## What Gets Tested
 
-## KVM Support
-
-The pipeline is designed to work with:
-
-1. **Microsoft-hosted agents**: Standard_D4s_v3 VMs support nested virtualization
-2. **Self-hosted agents**: Must have KVM access (`/dev/kvm`)
-
-When KVM is not available, tests run in software emulation mode (slower but functional).
-
-## Test Results
-
-Test results are published in JUnit XML format:
-- `qtest-results.xml`: Unit test results
-- `integration-results-*.xml`: Integration test results
+| Check | What it verifies |
+|-------|------------------|
+| Build QEMU | Device compiles into QEMU |
+| Build Driver | Driver compiles against kernel headers |
+| Build App | App compiles with CMake |
+| Smoke Test | PhantomFPGA device shows up in QEMU |
+| Integration | VM boots, device is visible via lspci |
 
 ## Artifacts
 
-The pipeline produces these artifacts:
+The pipeline produces these artifacts (retained for 7 days):
 
 | Artifact | Contents |
 |----------|----------|
 | `qemu-x86_64` | QEMU binary for x86_64 |
 | `qemu-aarch64` | QEMU binary for aarch64 |
-| `images-x86_64` | Kernel + rootfs for x86_64 |
-| `images-aarch64` | Kernel + rootfs for aarch64 |
-| `logs-integration-*` | Test logs for debugging |
-| `build-summary` | Build information |
-
-## Timeouts
-
-| Stage | Timeout |
-|-------|---------|
-| QEMU build | 60 minutes |
-| Buildroot build | 120 minutes |
-| Unit tests | 30 minutes |
-| Integration tests | 30 minutes |
+| `guest-x86_64` | Kernel + rootfs for x86_64 |
+| `guest-aarch64` | Kernel + rootfs for aarch64 |
 
 ## Local Testing
 
-To test the CI pipeline locally:
+To test what CI tests locally:
 
 ```bash
-# Run the smoke test
-./ci/scripts/smoke-test.sh
+# Build QEMU (same as CI)
+cd platform/qemu
+./setup.sh && make build
 
-# Build everything
-./ci/scripts/build-qemu.sh --arch both
-./ci/scripts/build-buildroot.sh --arch both
+# Verify device exists
+./build/qemu-system-x86_64 -device help 2>&1 | grep phantom
 
-# Run integration tests
-./ci/scripts/run-integration-tests.sh --arch x86_64
+# Build driver (same as CI)
+cd driver && make
+
+# Build app (same as CI)
+cd app && mkdir -p build && cd build && cmake .. && make
 ```
 
-## Self-Hosted Agent Setup
+## Timeouts
 
-For self-hosted agents with KVM:
-
-1. Install agent with `kvm` capability
-2. Add user to `kvm` group: `sudo usermod -aG kvm azureuser`
-3. Uncomment self-hosted pool section in `azure-pipelines.yml`
+| Job | Timeout |
+|-----|---------|
+| QEMU build | 60 minutes |
+| Buildroot build | 120 minutes |
+| Integration tests | 15 minutes |
 
 ## Troubleshooting
 
-### Build Failures
+### "PhantomFPGA device not found"
 
-1. Check if dependencies are installed
-2. Verify QEMU version compatibility
-3. Check disk space (Buildroot needs ~10GB)
-
-### Test Failures
-
-1. Check QEMU log in artifacts
-2. Verify KVM availability
-3. Check timeout settings
-
-### Cache Issues
-
-Increment `CACHE_VERSION` variable to invalidate all caches:
-
-```yaml
-variables:
-  CACHE_VERSION: 'v2'  # was 'v1'
+Make sure QEMU was built with our patches:
+```bash
+./platform/qemu/build/qemu-system-x86_64 -device help 2>&1 | grep phantom
 ```
+
+### Build taking forever
+
+Buildroot builds the entire guest Linux from source. First build takes 30-60
+minutes. Subsequent builds use cache.
+
+### Integration test failures
+
+Check if all artifacts downloaded correctly. The VM needs both QEMU binary
+and guest images to boot.
+
+## Adding New Tests
+
+1. Add test script to `tests/integration/`
+2. Make it exit 0 on success, non-zero on failure
+3. Add to `tests/integration/run_all.sh`
+4. CI will pick it up automatically

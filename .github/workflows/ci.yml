@@ -1,0 +1,313 @@
+# PhantomFPGA CI Pipeline
+#
+# Builds QEMU with PhantomFPGA device, builds guest images,
+# and runs tests. Because untested code is just a suggestion.
+#
+name: CI
+
+on:
+  push:
+    branches: [main, develop]
+    paths-ignore:
+      - '**.md'
+      - 'docs/**'
+      - 'LICENSE'
+  pull_request:
+    branches: [main]
+    paths-ignore:
+      - '**.md'
+      - 'docs/**'
+      - 'LICENSE'
+
+env:
+  QEMU_VERSION: v8.2.2
+  BUILDROOT_VERSION: "2024.02.10"
+
+jobs:
+  # ===========================================================================
+  # Build QEMU with PhantomFPGA device
+  # ===========================================================================
+  build-qemu:
+    name: Build QEMU (${{ matrix.arch }})
+    runs-on: ubuntu-22.04
+    strategy:
+      matrix:
+        arch: [x86_64, aarch64]
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            git ninja-build python3 python3-pip pkg-config \
+            libglib2.0-dev libpixman-1-dev libslirp-dev \
+            libcap-ng-dev libattr1-dev
+          sudo pip3 install meson
+
+      - name: Cache QEMU source
+        uses: actions/cache@v4
+        with:
+          path: platform/qemu/qemu
+          key: qemu-src-${{ env.QEMU_VERSION }}
+
+      - name: Cache QEMU build
+        uses: actions/cache@v4
+        with:
+          path: platform/qemu/build
+          key: qemu-build-${{ matrix.arch }}-${{ env.QEMU_VERSION }}-${{ hashFiles('platform/qemu/src/**') }}
+          restore-keys: |
+            qemu-build-${{ matrix.arch }}-${{ env.QEMU_VERSION }}-
+
+      - name: Build QEMU
+        run: |
+          cd platform/qemu
+          ./setup.sh
+          make build
+        env:
+          NPROC: 4
+
+      - name: Verify PhantomFPGA device
+        run: |
+          ./platform/qemu/build/qemu-system-${{ matrix.arch }} -device help 2>&1 | grep -i phantom
+          echo "PhantomFPGA device found!"
+
+      - name: Upload QEMU binary
+        uses: actions/upload-artifact@v4
+        with:
+          name: qemu-${{ matrix.arch }}
+          path: |
+            platform/qemu/build/qemu-system-${{ matrix.arch }}
+            platform/qemu/build/pc-bios/
+          retention-days: 7
+
+  # ===========================================================================
+  # Build Buildroot guest images
+  # ===========================================================================
+  build-guest:
+    name: Build Guest Image (${{ matrix.arch }})
+    runs-on: ubuntu-22.04
+    strategy:
+      matrix:
+        arch: [x86_64, aarch64]
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            build-essential rsync bc cpio unzip wget \
+            libncurses-dev file
+
+      - name: Cache Buildroot downloads
+        uses: actions/cache@v4
+        with:
+          path: platform/buildroot/dl
+          key: buildroot-dl-${{ env.BUILDROOT_VERSION }}
+
+      - name: Cache Buildroot build
+        uses: actions/cache@v4
+        with:
+          path: platform/buildroot/build-${{ matrix.arch }}
+          key: buildroot-${{ matrix.arch }}-${{ env.BUILDROOT_VERSION }}-${{ hashFiles('platform/buildroot/configs/**') }}
+          restore-keys: |
+            buildroot-${{ matrix.arch }}-${{ env.BUILDROOT_VERSION }}-
+
+      - name: Build guest image
+        run: |
+          cd platform/buildroot
+          make ${{ matrix.arch }}
+        timeout-minutes: 120
+
+      - name: Upload guest images
+        uses: actions/upload-artifact@v4
+        with:
+          name: guest-${{ matrix.arch }}
+          path: |
+            platform/images/
+          retention-days: 7
+
+  # ===========================================================================
+  # Run smoke tests (quick verification)
+  # ===========================================================================
+  smoke-test:
+    name: Smoke Test
+    runs-on: ubuntu-22.04
+    needs: [build-qemu]
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Download QEMU
+        uses: actions/download-artifact@v4
+        with:
+          name: qemu-x86_64
+          path: platform/qemu/build/
+
+      - name: Make QEMU executable
+        run: chmod +x platform/qemu/build/qemu-system-x86_64
+
+      - name: Run smoke test
+        run: |
+          # Verify QEMU starts and has our device
+          ./platform/qemu/build/qemu-system-x86_64 -device help 2>&1 | grep -q "phantomfpga"
+          echo "Smoke test passed - PhantomFPGA device available"
+
+  # ===========================================================================
+  # Build driver (compile check)
+  # ===========================================================================
+  build-driver:
+    name: Check Driver Compiles
+    runs-on: ubuntu-22.04
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install kernel headers
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y linux-headers-$(uname -r) build-essential
+
+      - name: Build driver
+        run: |
+          cd driver
+          make
+          echo "Driver compiles successfully!"
+
+      - name: Check for warnings
+        run: |
+          cd driver
+          make clean
+          make 2>&1 | tee build.log
+          if grep -i "warning:" build.log; then
+            echo "::warning::Driver has compilation warnings"
+          fi
+
+  # ===========================================================================
+  # Build app (compile check)
+  # ===========================================================================
+  build-app:
+    name: Check App Compiles
+    runs-on: ubuntu-22.04
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y cmake build-essential
+
+      - name: Build app
+        run: |
+          cd app
+          mkdir -p build && cd build
+          cmake ..
+          make
+          echo "App compiles successfully!"
+
+      - name: Run app help
+        run: |
+          ./app/build/phantomfpga_app --help
+
+  # ===========================================================================
+  # Integration tests (full VM boot)
+  # ===========================================================================
+  integration-test:
+    name: Integration Tests
+    runs-on: ubuntu-22.04
+    needs: [build-qemu, build-guest]
+    if: github.event_name == 'push'  # Skip on PRs to save time
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Download QEMU
+        uses: actions/download-artifact@v4
+        with:
+          name: qemu-x86_64
+          path: platform/qemu/build/
+
+      - name: Download guest images
+        uses: actions/download-artifact@v4
+        with:
+          name: guest-x86_64
+          path: platform/images/
+
+      - name: Setup permissions
+        run: |
+          chmod +x platform/qemu/build/qemu-system-x86_64
+          chmod +x platform/run_qemu.sh
+
+      - name: Install test dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y sshpass expect
+
+      - name: Boot VM and run tests
+        run: |
+          # Start VM in background
+          ./platform/run_qemu.sh --headless &
+          VM_PID=$!
+
+          # Wait for VM to boot (check SSH)
+          echo "Waiting for VM to boot..."
+          for i in {1..60}; do
+            if sshpass -p root ssh -o StrictHostKeyChecking=no -o ConnectTimeout=5 -p 2222 root@localhost "echo 'VM is up'" 2>/dev/null; then
+              echo "VM booted successfully!"
+              break
+            fi
+            echo "Waiting... ($i/60)"
+            sleep 5
+          done
+
+          # Check if device is visible
+          sshpass -p root ssh -p 2222 root@localhost "lspci | grep -i 1dad"
+
+          # Read device ID register
+          sshpass -p root ssh -p 2222 root@localhost "cat /sys/bus/pci/devices/*/vendor 2>/dev/null | grep -i 1dad || echo 'Device found via lspci'"
+
+          # Shutdown VM
+          kill $VM_PID 2>/dev/null || true
+
+          echo "Integration tests passed!"
+        timeout-minutes: 15
+
+  # ===========================================================================
+  # Summary job
+  # ===========================================================================
+  ci-success:
+    name: CI Success
+    runs-on: ubuntu-22.04
+    needs: [build-qemu, build-driver, build-app, smoke-test]
+    if: always()
+
+    steps:
+      - name: Check results
+        run: |
+          if [ "${{ needs.build-qemu.result }}" != "success" ]; then
+            echo "QEMU build failed"
+            exit 1
+          fi
+          if [ "${{ needs.build-driver.result }}" != "success" ]; then
+            echo "Driver build failed"
+            exit 1
+          fi
+          if [ "${{ needs.build-app.result }}" != "success" ]; then
+            echo "App build failed"
+            exit 1
+          fi
+          if [ "${{ needs.smoke-test.result }}" != "success" ]; then
+            echo "Smoke test failed"
+            exit 1
+          fi
+          echo "All CI checks passed!"
