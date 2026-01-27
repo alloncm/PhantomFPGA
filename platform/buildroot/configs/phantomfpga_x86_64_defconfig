@@ -1,5 +1,6 @@
 # PhantomFPGA x86_64 Buildroot Configuration
 # This creates a minimal Linux guest for FPGA driver development training
+# Config version: 2 (bumped to force cache invalidation after overlay changes)
 #
 # Build with:
 #   make O=output/x86_64 phantomfpga_x86_64_defconfig

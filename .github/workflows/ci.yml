@@ -274,20 +274,39 @@ jobs:
 
           # Wait for VM to boot (check SSH)
           echo "Waiting for VM to boot..."
+          SSH_SUCCESS=0
           for i in {1..60}; do
-            if sshpass -p root ssh -o StrictHostKeyChecking=no -o ConnectTimeout=5 -p 2222 root@localhost "echo 'VM is up'" 2>/dev/null; then
+            # Try verbose SSH to see what's happening
+            if sshpass -p root ssh -v -o StrictHostKeyChecking=no -o ConnectTimeout=5 -p 2222 root@localhost "echo 'VM is up'" 2>&1 | tee /tmp/ssh_$i.log | grep -q "VM is up"; then
               echo "VM booted successfully!"
+              SSH_SUCCESS=1
               break
             fi
             echo "Waiting... ($i/60)"
+            # Show last few lines of SSH log for debugging
+            if [ -f /tmp/ssh_$i.log ]; then
+              tail -5 /tmp/ssh_$i.log 2>/dev/null || true
+            fi
             sleep 5
           done
 
+          if [ "$SSH_SUCCESS" -eq 0 ]; then
+            echo "SSH connection failed after 60 attempts"
+            echo "=== Last SSH attempt log ==="
+            cat /tmp/ssh_60.log 2>/dev/null || echo "No log available"
+            echo "=== Checking port forwarding ==="
+            ss -tlnp | grep 2222 || echo "Port 2222 not listening"
+            echo "=== QEMU process ==="
+            ps aux | grep qemu || echo "No QEMU process found"
+            kill $VM_PID 2>/dev/null || true
+            exit 1
+          fi
+
           # Check if device is visible
-          sshpass -p root ssh -p 2222 root@localhost "lspci | grep -i 1dad"
+          sshpass -p root ssh -o StrictHostKeyChecking=no -p 2222 root@localhost "lspci | grep -i 1dad"
 
           # Read device ID register
-          sshpass -p root ssh -p 2222 root@localhost "cat /sys/bus/pci/devices/*/vendor 2>/dev/null | grep -i 1dad || echo 'Device found via lspci'"
+          sshpass -p root ssh -o StrictHostKeyChecking=no -p 2222 root@localhost "cat /sys/bus/pci/devices/*/vendor 2>/dev/null | grep -i 1dad || echo 'Device found via lspci'"
 
           # Shutdown VM
           kill $VM_PID 2>/dev/null || true
