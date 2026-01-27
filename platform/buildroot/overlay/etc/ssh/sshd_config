@@ -1,0 +1,31 @@
+# PhantomFPGA Training Environment - SSH Config
+# LAB ENVIRONMENT ONLY - NOT FOR PRODUCTION!
+
+# Allow root login with password (for CI and training)
+PermitRootLogin yes
+PasswordAuthentication yes
+
+# Standard settings
+Port 22
+Protocol 2
+HostKey /etc/ssh/ssh_host_rsa_key
+HostKey /etc/ssh/ssh_host_ecdsa_key
+HostKey /etc/ssh/ssh_host_ed25519_key
+
+# Logging
+SyslogFacility AUTH
+LogLevel INFO
+
+# Authentication
+LoginGraceTime 2m
+StrictModes yes
+MaxAuthTries 6
+MaxSessions 10
+PubkeyAuthentication yes
+AuthorizedKeysFile .ssh/authorized_keys
+
+# Disable empty passwords
+PermitEmptyPasswords no
+
+# Subsystem for SFTP
+Subsystem sftp /usr/libexec/sftp-server
