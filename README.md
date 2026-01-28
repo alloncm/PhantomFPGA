@@ -64,11 +64,11 @@ You need a Linux machine (real or VM) with these packages:
 # Ubuntu/Debian - copy-paste this whole block
 sudo apt-get update
 sudo apt-get install -y \
-    git build-essential ninja-build python3 python3-pip \
+    git build-essential ninja-build meson pkg-config \
+    python3 python3-pip \
     libglib2.0-dev libpixman-1-dev libslirp-dev \
+    libelf-dev libssl-dev flex bison \
     rsync bc cpio unzip wget
-
-sudo pip3 install meson
 
 # Optional: check if KVM is available (makes things faster)
 ls -la /dev/kvm
@@ -114,7 +114,7 @@ Let's verify the device is there:
 
 **Expected output:**
 ```
-name "phantomfpga-pcie", bus PCI
+name "phantomfpga", bus PCI, desc "PhantomFPGA SG-DMA Training Device v2.0"
 ```
 
 If you see this - congratulations! You built a fake FPGA. Your parents would be... confused but probably supportive.
@@ -125,17 +125,24 @@ This builds a minimal Linux system that runs inside QEMU.
 
 ```bash
 cd platform/buildroot
-make
+make            # Builds x86_64 image
+make aarch64    # Builds aarch64 image (optional, see note below)
 cd ../..
 ```
 
-**Fair warning**: This takes a while. Like, 20-40 minutes. Good time for coffee, lunch, or contemplating the meaning of life. Buildroot is downloading and compiling an entire Linux distribution.
+**Which one do I need?** Short version: build the one that matches your computer's CPU. If you're on a regular x86 PC or laptop, `make` is all you need. If you're on an ARM64 machine (like a Mac with M1/M2/M3 chip running Linux through something like Lima or UTM, or a native ARM64 Linux box), build the aarch64 image too -- it'll run *much* faster because QEMU can use hardware virtualization instead of emulating everything in software. You can also build both and try them, nothing will break.
+
+**Fair warning**: Each image takes a while. Like, 20-40 minutes. Good time for coffee, lunch, or contemplating the meaning of life. Buildroot is downloading and compiling an entire Linux distribution.
 
 **What you should see at the end:**
 ```
-Images built successfully!
-  Kernel: platform/images/bzImage
-  Rootfs: platform/images/rootfs.ext4
+# x86_64
+Kernel: platform/images/bzImage
+Rootfs: platform/images/rootfs.ext4
+
+# aarch64
+Kernel: platform/images/Image
+Rootfs: platform/images/rootfs-aarch64.ext4
 ```
 
 ### Step 4: Boot the VM
@@ -167,7 +174,7 @@ Welcome to PhantomFPGA Training Environment!
 phantomfpga login:
 ```
 
-Login as `root` (no password needed).
+Login as `root` with password `root`.
 
 ### Step 5: Verify the Device is There
 
@@ -293,7 +300,7 @@ Start here and work your way through:
 Want to try aarch64 instead of x86_64? Sure thing:
 
 ```bash
-# Build the aarch64 guest image
+# Build the aarch64 guest image (if you haven't already in Step 3)
 cd platform/buildroot
 make aarch64
 cd ../..
@@ -303,6 +310,8 @@ cd ../..
 ```
 
 Same device, same driver code, different architecture. That's the beauty of proper abstractions.
+
+**Which is faster?** The QEMU build (Step 2) already produces binaries for both architectures. The trick is: when your VM's architecture matches your host machine, QEMU can use hardware virtualization (KVM) and things run almost at native speed. When they don't match, QEMU has to emulate every instruction in software, which works but is noticeably slower. So if you're on a Mac with an M-series chip, aarch64 is your friend. On a regular PC, stick with x86_64.
 
 ## VM Options
 
@@ -319,7 +328,7 @@ Same device, same driver code, different architecture. That's the beauty of prop
 # Without KVM (slower but works anywhere)
 ./platform/run_qemu.sh --no-kvm
 
-# SSH access (from your host machine)
+# SSH access (from your host machine, password: root)
 ssh -p 2222 root@localhost
 ```
 
