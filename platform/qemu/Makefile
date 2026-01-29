@@ -198,6 +198,13 @@ $(STAMP_CONFIGURE): $(STAMP_PATCH) | $(STAMP_DIR)
 build: $(STAMP_BUILD)
 $(STAMP_BUILD): $(STAMP_CONFIGURE) | $(STAMP_DIR)
 	@echo "=== Building QEMU ==="
+	@# Silence the scary "fatal: No names found" message from dtc subproject.
+	@# The dtc build uses 'git describe' for versioning, which fails without tags.
+	@# This is harmless but looks alarming, so we create a tag to make it happy.
+	@if [ -d "$(QEMU_DIR)/subprojects/dtc/.git" ]; then \
+		(cd "$(QEMU_DIR)/subprojects/dtc" && git describe --tags >/dev/null 2>&1) || \
+		(cd "$(QEMU_DIR)/subprojects/dtc" && git tag -a "v1.6.0" -m "Version for build" HEAD 2>/dev/null) || true; \
+	fi
 	cd $(QEMU_BUILD) && ninja -j$(NPROC)
 	@echo ""
 	@echo "Build complete! Binary at: $(QEMU_BINARY)"
