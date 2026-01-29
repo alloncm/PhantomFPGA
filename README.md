@@ -130,9 +130,9 @@ make aarch64    # Builds aarch64 image (optional, see note below)
 cd ../..
 ```
 
-**Which one do I need?** Short version: build the one that matches your computer's CPU. If you're on a regular x86 PC or laptop, `make` is all you need. If you're on an ARM64 machine (like a Mac with M1/M2/M3 chip running Linux through something like Lima or UTM, or a native ARM64 Linux box), build the aarch64 image too -- it'll run *much* faster because QEMU can use hardware virtualization instead of emulating everything in software. You can also build both and try them, nothing will break.
+**Which one do I need?** Short version: build the one that matches your computer's CPU. If you're on a regular x86 PC or laptop, `make` is all you need. If you're on an ARM64 machine (like a Mac with M1 and later chip running Linux through something like Lima or UTM, or any native ARM64 Linux box/laptop), build the aarch64 image, since it'll run *much* faster as QEMU can use hardware virtualization instead of emulating everything in software. You can also build both and try them, nothing will break.
 
-**Fair warning**: Each image takes a while. Like, 20-40 minutes. Good time for coffee, lunch, or contemplating the meaning of life. Buildroot is downloading and compiling an entire Linux distribution.
+**Fair warning**: Each image takes a while. Like, 20-40 minutes. Good time for coffee, lunch, or contemplating the meaning of life. Buildroot is downloading and compiling an entire Linux distribution. Make sure your build machine has enough CPUs and RAM available. For instance, Lima VM on a Mac configures only 4GB of RAM for the VM by default, and you'd probably need at least 8GB, if not more. Getting there is quite easy - just run something like `limactl edit debian` or whatever Linux you use, and insert stuff like `cpus: 4` and `memory: "8GiB"`.
 
 **What you should see at the end:**
 ```
@@ -242,49 +242,6 @@ mkdir -p build && cd build
 cmake ..
 make
 ./phantomfpga_app --help
-```
-
-## Project Structure
-
-```
-PhantomFPGA/
-|
-|-- platform/
-|   |-- qemu/
-|   |   |-- src/hw/misc/         # QEMU device source
-|   |   |   |-- phantomfpga.c    # The virtual device (the star of the show)
-|   |   |   +-- phantomfpga.h    # Device definitions
-|   |   |-- patches/             # QEMU build integration
-|   |   |-- setup.sh             # Build setup script
-|   |   +-- Makefile
-|   |-- buildroot/
-|   |   |-- configs/             # Guest Linux configs (x86_64 + aarch64)
-|   |   |-- overlay/             # Guest filesystem customizations
-|   |   +-- Makefile
-|   |-- images/                  # Built kernel and rootfs (gitignored)
-|   +-- run_qemu.sh              # VM launcher
-|
-|-- driver/
-|   |-- phantomfpga_drv.c        # YOUR DRIVER (skeleton with TODOs)
-|   |-- phantomfpga_regs.h       # Register definitions
-|   |-- phantomfpga_uapi.h       # Userspace API (ioctls)
-|   |-- Kbuild
-|   +-- Makefile
-|
-|-- app/
-|   |-- phantomfpga_app.c        # YOUR APP (skeleton with TODOs)
-|   +-- CMakeLists.txt
-|
-|-- tests/
-|   |-- unit/                    # QEMU device unit tests
-|   +-- integration/             # In-VM integration tests
-|
-|-- docs/
-|   |-- architecture.md          # How everything fits together
-|   |-- driver-guide.md          # Step-by-step driver implementation guide
-|   +-- register-reference.md    # Complete register documentation
-|
-+-- ci/                          # CI/CD pipeline stuff
 ```
 
 ## Documentation
