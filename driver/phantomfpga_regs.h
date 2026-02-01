@@ -177,14 +177,17 @@ static inline void phantomfpga_irq_coalesce_unpack(u32 val, u16 *count, u16 *tim
 /* ------------------------------------------------------------------------ */
 /* Fault Injection (@ 0x058) Bits                                           */
 /* For when you want to see the world burn (in a controlled way)            */
+/* Note: These are also defined in uapi header with (1 << n) for userspace  */
 /* ------------------------------------------------------------------------ */
 
+#ifndef PHANTOMFPGA_FAULT_DROP_PACKET
 #define PHANTOMFPGA_FAULT_DROP_PACKET     BIT(0)  /* Drop packets randomly */
 #define PHANTOMFPGA_FAULT_CORRUPT_HDR_CRC BIT(1)  /* Corrupt header CRC32 */
 #define PHANTOMFPGA_FAULT_CORRUPT_PAY_CRC BIT(2)  /* Corrupt payload CRC32 */
 #define PHANTOMFPGA_FAULT_CORRUPT_PAYLOAD BIT(3)  /* Flip bits in payload */
 #define PHANTOMFPGA_FAULT_CORRUPT_SEQ     BIT(4)  /* Skip sequence numbers */
 #define PHANTOMFPGA_FAULT_DELAY_IRQ       BIT(5)  /* Suppress interrupts */
+#endif
 
 /* ------------------------------------------------------------------------ */
 /* Scatter-Gather Descriptor (32 bytes)                                     */
@@ -222,8 +225,10 @@ struct phantomfpga_sg_desc {
 /* ------------------------------------------------------------------------ */
 /* Completion Writeback (16 bytes)                                          */
 /* Written at the end of each buffer when the descriptor completes          */
+/* Note: Structs also defined in uapi header for userspace                  */
 /* ------------------------------------------------------------------------ */
 
+#ifndef PHANTOMFPGA_COMPL_OK
 /*
  * Completion status codes - what happened during the transfer
  */
@@ -241,14 +246,17 @@ struct phantomfpga_completion {
 	__le32 actual_length;  /* Bytes actually transferred */
 	__le64 timestamp;      /* Device timestamp (ns since start) */
 } __packed;
+#endif
 
 #define PHANTOMFPGA_COMPL_SIZE  sizeof(struct phantomfpga_completion)
 
 /* ------------------------------------------------------------------------ */
 /* Packet Headers                                                           */
 /* Three flavors of metadata - pick your poison                             */
+/* Note: Also defined in uapi header for userspace (without __packed)       */
 /* ------------------------------------------------------------------------ */
 
+#ifndef PHANTOMFPGA_PKT_FLAG_CORRUPTED
 /*
  * Profile 0: Simple Header (16 bytes)
  * The "Hello World" of packet headers. Just the basics.
@@ -299,6 +307,7 @@ struct phantomfpga_hdr_full {
 /* Full header flags */
 #define PHANTOMFPGA_PKT_FLAG_CORRUPTED   BIT(0)  /* Intentionally corrupted (fault injection) */
 #define PHANTOMFPGA_PKT_FLAG_VARIABLE    BIT(1)  /* Variable-size packet */
+#endif
 
 /* ------------------------------------------------------------------------ */
 /* Helper Functions and Macros                                              */

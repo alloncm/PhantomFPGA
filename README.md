@@ -134,16 +134,19 @@ cd ../..
 
 **Fair warning**: Each image takes a while. Like, 20-40 minutes. Good time for coffee, lunch, or contemplating the meaning of life. Buildroot is downloading and compiling an entire Linux distribution. Make sure your build machine has enough CPUs and RAM available. For instance, Lima VM on a Mac configures only 4GB of RAM for the VM by default, and you'd probably need at least 8GB, if not more. Getting there is quite easy - just run something like `limactl edit debian` or whatever Linux you use, and insert stuff like `cpus: 4` and `memory: "8GiB"`.
 
-**What you should see at the end:**
+**What you should see at the end** (don't move to Step 4 until you see this!):
 ```
-# x86_64
-Kernel: platform/images/bzImage
-Rootfs: platform/images/rootfs.ext4
+==> x86_64 build complete!
+    Kernel: platform/images/bzImage
+    Rootfs: platform/images/rootfs.ext4
 
-# aarch64
-Kernel: platform/images/Image
-Rootfs: platform/images/rootfs-aarch64.ext4
+# For aarch64:
+==> aarch64 build complete!
+    Kernel: platform/images/Image
+    Rootfs: platform/images/rootfs-aarch64.ext4
 ```
+
+If the command finishes but you don't see this message, something went wrong. Check the troubleshooting section.
 
 ### Step 4: Boot the VM
 
@@ -228,25 +231,44 @@ You've got the environment running. Now comes the actual learning:
 3. **Test your work**
    - Load driver, run app, watch data flow, feel accomplished
 
-### Building the Driver (Inside the VM)
+### Building the Driver (From Your Host)
+
+The driver needs to be built against the guest kernel, which means cross-compiling from your host machine (not inside the VM, which lacks kernel headers).
 
 ```bash
-cd /mnt/driver    # This is your host's driver/ directory, shared with the VM
-make
-sudo insmod phantomfpga.ko
+# From your host machine (not inside the VM):
+cd driver
+make KDIR=../platform/buildroot/output/x86_64/build/linux-6.6.70 \
+     CROSS_COMPILE=../platform/buildroot/output/x86_64/host/bin/x86_64-buildroot-linux-gnu-
+```
+
+The compiled module (`phantomfpga.ko`) appears in the `driver/` directory, which is shared with the VM via 9p at `/mnt/driver`.
+
+```bash
+# Inside the VM (via SSH or console):
+cd /mnt/driver
+insmod phantomfpga.ko
 dmesg | tail -20
 ```
 
 You should see messages about the driver loading and finding the device.
 
-### Building the App (Inside the VM)
+### Building the App (From Your Host)
+
+Same deal - cross-compile from your host:
 
 ```bash
-cd /mnt/app
-mkdir -p build && cd build
-cmake ..
-make
-./phantomfpga_app --help
+# From your host machine:
+cd app
+CC=../platform/buildroot/output/x86_64/host/bin/x86_64-buildroot-linux-gnu-gcc
+$CC -Wall -O2 -I../driver -o phantomfpga_app phantomfpga_app.c -lpthread -lrt
+```
+
+The binary is shared with the VM at `/mnt/app/phantomfpga_app`.
+
+```bash
+# Inside the VM:
+/mnt/app/phantomfpga_app --help
 ```
 
 ## Documentation
@@ -318,18 +340,55 @@ cd platform/qemu && ./setup.sh && make build
 
 ### "Kernel image not found"
 
-Did you build Buildroot?
+Did you build Buildroot? Make sure you wait for it to complete - it takes 20-40 minutes.
 ```bash
 cd platform/buildroot && make
 ```
 
+**Important**: The build isn't done until you see this message:
+```
+==> x86_64 build complete!
+    Kernel: platform/images/bzImage
+    Rootfs: platform/images/rootfs.ext4
+```
+
+If you don't see this, the build either failed or is still running.
+
+### "Buildroot download/extraction failed"
+
+If you see errors like "gzip: unexpected end of file" or "tar: Error is not recoverable", you might have a corrupted download. This can happen if a previous download was interrupted.
+
+Check for zero-byte tarballs:
+```bash
+ls -la platform/buildroot/dl/
+# Look for any files with size 0
+```
+
+If you find empty or corrupted tarballs, delete them and the stamps, then retry:
+```bash
+cd platform/buildroot
+rm -rf .stamps dl/*.tar.gz
+make
+```
+
+Also verify you have network connectivity - buildroot needs to download packages:
+```bash
+wget -q --spider https://buildroot.org && echo "OK" || echo "Network issue"
+```
+
 ### "Device not showing up in lspci"
 
-Make sure you're using OUR QEMU, not the system QEMU:
+Make sure you're using OUR QEMU, not the system QEMU. The difference is subtle but crucial:
 ```bash
-./platform/run_qemu.sh          # Correct - uses our custom QEMU
-qemu-system-x86_64 ...          # Wrong - uses system QEMU without our device
+# CORRECT - uses our custom QEMU that includes the PhantomFPGA device:
+./platform/run_qemu.sh
+./platform/qemu/build/qemu-system-x86_64 ...
+
+# WRONG - uses system QEMU from /usr/bin which doesn't have our device:
+qemu-system-x86_64 ...
 ```
+
+The path matters! When you run `qemu-system-x86_64` without a path, your shell finds it in `/usr/bin/` (the system-installed version). Our custom QEMU with the PhantomFPGA device is in `platform/qemu/build/`.
 
 ### "My driver crashed the kernel"
 

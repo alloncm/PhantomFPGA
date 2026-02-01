@@ -197,8 +197,9 @@ static inline u32 pfpga_compute_crc32(const void *data, size_t len)
 /*
  * Configure the descriptor ring address in the device.
  * Called after descriptor ring allocation.
+ * (Unused in skeleton - trainees implement the call site)
  */
-static void pfpga_configure_desc_ring(struct phantomfpga_dev *pfdev)
+static void __maybe_unused pfpga_configure_desc_ring(struct phantomfpga_dev *pfdev)
 {
 	/*
 	 * TODO: Write descriptor ring configuration to device
@@ -217,8 +218,9 @@ static void pfpga_configure_desc_ring(struct phantomfpga_dev *pfdev)
 /*
  * Apply packet configuration to device registers.
  * Called from SET_CFG ioctl after validation.
+ * (Unused in skeleton - trainees implement the call site)
  */
-static void pfpga_apply_config(struct phantomfpga_dev *pfdev)
+static void __maybe_unused pfpga_apply_config(struct phantomfpga_dev *pfdev)
 {
 	/*
 	 * TODO: Write configuration to device registers
@@ -242,8 +244,9 @@ static void pfpga_apply_config(struct phantomfpga_dev *pfdev)
  *
  * After populating descriptors with buffer addresses, write the new
  * head index to tell the device how many are available.
+ * (Unused in skeleton - trainees implement the call site)
  */
-static void pfpga_submit_descriptors(struct phantomfpga_dev *pfdev, u32 count)
+static void __maybe_unused pfpga_submit_descriptors(struct phantomfpga_dev *pfdev, u32 count)
 {
 	/*
 	 * TODO: Submit descriptors to device
@@ -263,8 +266,9 @@ static void pfpga_submit_descriptors(struct phantomfpga_dev *pfdev, u32 count)
 /*
  * Initialize all descriptors with buffer addresses.
  * Called once after buffer allocation.
+ * (Unused in skeleton - trainees implement the call site)
  */
-static void pfpga_init_descriptors(struct phantomfpga_dev *pfdev)
+static void __maybe_unused pfpga_init_descriptors(struct phantomfpga_dev *pfdev)
 {
 	/*
 	 * TODO: Initialize descriptor ring
@@ -359,8 +363,9 @@ static void pfpga_soft_reset(struct phantomfpga_dev *pfdev)
  *
  * Called when descriptors complete (IRQ coalescing thresholds met).
  * The driver should process completed descriptors and wake up waiters.
+ * (Unused in skeleton - trainees connect this in MSI-X setup)
  */
-static irqreturn_t pfpga_irq_complete(int irq, void *data)
+static irqreturn_t __maybe_unused pfpga_irq_complete(int irq, void *data)
 {
 	struct phantomfpga_dev *pfdev = data;
 	u32 irq_status;
@@ -395,8 +400,9 @@ static irqreturn_t pfpga_irq_complete(int irq, void *data)
  * MSI-X interrupt handler for errors (vector 1).
  *
  * Called on error conditions (DMA error, no descriptors available).
+ * (Unused in skeleton - trainees connect this in MSI-X setup)
  */
-static irqreturn_t pfpga_irq_error(int irq, void *data)
+static irqreturn_t __maybe_unused pfpga_irq_error(int irq, void *data)
 {
 	struct phantomfpga_dev *pfdev = data;
 
@@ -536,6 +542,7 @@ static ssize_t pfpga_read(struct file *file, char __user *buf,
 	 */
 
 	/* Stub implementation */
+	(void)pfdev;
 	(void)flags;
 	(void)head;
 	(void)tail;

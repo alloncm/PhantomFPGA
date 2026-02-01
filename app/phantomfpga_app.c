@@ -38,6 +38,10 @@
 #include <poll.h>
 #include <sys/ioctl.h>
 #include <sys/mman.h>
+#include <sys/socket.h>
+#include <netinet/in.h>
+#include <arpa/inet.h>
+#include <netdb.h>
 
 /* Include the driver UAPI header for ioctl definitions */
 #include "phantomfpga_uapi.h"
@@ -106,6 +110,22 @@ struct app_context {
     bool stats_only;
     bool validate_crc;          /* Enable CRC validation */
     bool running;
+
+    /* Network streaming */
+    int udp_sock;               /* UDP socket fd (-1 if disabled) */
+    struct sockaddr_in udp_dest; /* UDP destination address */
+
+    int tcp_server_sock;        /* TCP server listen socket (-1 if disabled) */
+    int tcp_client_fd;          /* Connected TCP client fd (-1 if none) */
+    uint16_t tcp_server_port;   /* TCP server listen port */
+
+    int tcp_connect_sock;       /* TCP client socket (-1 if disabled) */
+    char tcp_connect_host[256]; /* TCP client destination host */
+    uint16_t tcp_connect_port;  /* TCP client destination port */
+
+    uint64_t net_packets_sent;  /* Packets sent over network */
+    uint64_t net_bytes_sent;    /* Bytes sent over network */
+    uint64_t net_send_errors;   /* Network send errors */
 };
 
 /* Global context for signal handler */
@@ -132,6 +152,14 @@ static bool validate_packet(struct app_context *ctx, const void *packet, uint32_
 static void print_statistics(struct app_context *ctx);
 static void cleanup(struct app_context *ctx);
 static void signal_handler(int sig);
+
+/* Network streaming functions */
+static int setup_udp_streaming(struct app_context *ctx, const char *dest);
+static int setup_tcp_server(struct app_context *ctx, uint16_t port);
+static int setup_tcp_client(struct app_context *ctx, const char *host, uint16_t port);
+static void accept_tcp_client(struct app_context *ctx);
+static int stream_packet(struct app_context *ctx, const void *data, size_t len);
+static void cleanup_network(struct app_context *ctx);
 
 /* CRC32 functions */
 static void init_crc32_table(void);
@@ -160,6 +188,8 @@ static void init_crc32_table(void)
     crc32_table_initialized = true;
 }
 
+/* Unused in skeleton - trainees will call this in validate_packet */
+__attribute__((unused))
 static uint32_t compute_crc32(const void *data, size_t len)
 {
     const uint8_t *p = data;
@@ -170,6 +200,272 @@ static uint32_t compute_crc32(const void *data, size_t len)
     }
 
     return crc ^ 0xFFFFFFFF;
+}
+
+/* ------------------------------------------------------------------------ */
+/* Network Streaming Implementation                                         */
+/* ------------------------------------------------------------------------ */
+
+/*
+ * Parse HOST:PORT and set up UDP socket for streaming
+ */
+static int setup_udp_streaming(struct app_context *ctx, const char *dest)
+{
+    char host[256];
+    char *colon;
+    uint16_t port;
+    struct hostent *he;
+
+    strncpy(host, dest, sizeof(host) - 1);
+    host[sizeof(host) - 1] = '\0';
+
+    colon = strrchr(host, ':');
+    if (!colon) {
+        fprintf(stderr, "Invalid format for --udp, use HOST:PORT\n");
+        return -1;
+    }
+    *colon = '\0';
+    port = (uint16_t)strtoul(colon + 1, NULL, 10);
+    if (port == 0) {
+        fprintf(stderr, "Invalid UDP port: %s\n", colon + 1);
+        return -1;
+    }
+
+    /* Resolve hostname */
+    he = gethostbyname(host);
+    if (!he) {
+        fprintf(stderr, "Cannot resolve host: %s\n", host);
+        return -1;
+    }
+
+    /* Create UDP socket */
+    ctx->udp_sock = socket(AF_INET, SOCK_DGRAM, 0);
+    if (ctx->udp_sock < 0) {
+        perror("socket(UDP)");
+        return -1;
+    }
+
+    /* Set up destination address */
+    memset(&ctx->udp_dest, 0, sizeof(ctx->udp_dest));
+    ctx->udp_dest.sin_family = AF_INET;
+    ctx->udp_dest.sin_port = htons(port);
+    memcpy(&ctx->udp_dest.sin_addr, he->h_addr_list[0], he->h_length);
+
+    printf("[NET] UDP streaming to %s:%u\n", host, port);
+    return 0;
+}
+
+/*
+ * Set up TCP server socket for accepting connections
+ */
+static int setup_tcp_server(struct app_context *ctx, uint16_t port)
+{
+    struct sockaddr_in addr;
+    int opt = 1;
+
+    ctx->tcp_server_sock = socket(AF_INET, SOCK_STREAM, 0);
+    if (ctx->tcp_server_sock < 0) {
+        perror("socket(TCP server)");
+        return -1;
+    }
+
+    /* Allow address reuse */
+    if (setsockopt(ctx->tcp_server_sock, SOL_SOCKET, SO_REUSEADDR, &opt, sizeof(opt)) < 0) {
+        perror("setsockopt(SO_REUSEADDR)");
+        close(ctx->tcp_server_sock);
+        ctx->tcp_server_sock = -1;
+        return -1;
+    }
+
+    memset(&addr, 0, sizeof(addr));
+    addr.sin_family = AF_INET;
+    addr.sin_addr.s_addr = INADDR_ANY;
+    addr.sin_port = htons(port);
+
+    if (bind(ctx->tcp_server_sock, (struct sockaddr *)&addr, sizeof(addr)) < 0) {
+        perror("bind(TCP server)");
+        close(ctx->tcp_server_sock);
+        ctx->tcp_server_sock = -1;
+        return -1;
+    }
+
+    if (listen(ctx->tcp_server_sock, 1) < 0) {
+        perror("listen(TCP server)");
+        close(ctx->tcp_server_sock);
+        ctx->tcp_server_sock = -1;
+        return -1;
+    }
+
+    /* Set non-blocking for accept */
+    fcntl(ctx->tcp_server_sock, F_SETFL, O_NONBLOCK);
+
+    printf("[NET] TCP server listening on port %u\n", port);
+    return 0;
+}
+
+/*
+ * Connect to a TCP server for streaming
+ */
+static int setup_tcp_client(struct app_context *ctx, const char *host, uint16_t port)
+{
+    struct hostent *he;
+    struct sockaddr_in addr;
+
+    he = gethostbyname(host);
+    if (!he) {
+        fprintf(stderr, "Cannot resolve host: %s\n", host);
+        return -1;
+    }
+
+    ctx->tcp_connect_sock = socket(AF_INET, SOCK_STREAM, 0);
+    if (ctx->tcp_connect_sock < 0) {
+        perror("socket(TCP client)");
+        return -1;
+    }
+
+    memset(&addr, 0, sizeof(addr));
+    addr.sin_family = AF_INET;
+    addr.sin_port = htons(port);
+    memcpy(&addr.sin_addr, he->h_addr_list[0], he->h_length);
+
+    printf("[NET] Connecting to %s:%u...\n", host, port);
+    if (connect(ctx->tcp_connect_sock, (struct sockaddr *)&addr, sizeof(addr)) < 0) {
+        perror("connect(TCP client)");
+        close(ctx->tcp_connect_sock);
+        ctx->tcp_connect_sock = -1;
+        return -1;
+    }
+
+    printf("[NET] TCP client connected to %s:%u\n", host, port);
+    return 0;
+}
+
+/*
+ * Accept a pending TCP client connection (non-blocking)
+ */
+static void accept_tcp_client(struct app_context *ctx)
+{
+    struct sockaddr_in client_addr;
+    socklen_t client_len = sizeof(client_addr);
+    int fd;
+
+    if (ctx->tcp_server_sock < 0)
+        return;
+
+    /* Already have a client? */
+    if (ctx->tcp_client_fd >= 0)
+        return;
+
+    fd = accept(ctx->tcp_server_sock, (struct sockaddr *)&client_addr, &client_len);
+    if (fd < 0) {
+        if (errno != EAGAIN && errno != EWOULDBLOCK)
+            perror("accept");
+        return;
+    }
+
+    ctx->tcp_client_fd = fd;
+    printf("[NET] TCP client connected from %s:%u\n",
+           inet_ntoa(client_addr.sin_addr), ntohs(client_addr.sin_port));
+}
+
+/*
+ * Stream a packet over all enabled network channels
+ * Returns number of successful sends
+ */
+static int stream_packet(struct app_context *ctx, const void *data, size_t len)
+{
+    int sent = 0;
+    ssize_t ret;
+
+    /* UDP streaming */
+    if (ctx->udp_sock >= 0) {
+        ret = sendto(ctx->udp_sock, data, len, 0,
+                     (struct sockaddr *)&ctx->udp_dest, sizeof(ctx->udp_dest));
+        if (ret < 0) {
+            if (ctx->verbose)
+                perror("sendto(UDP)");
+            ctx->net_send_errors++;
+        } else {
+            ctx->net_packets_sent++;
+            ctx->net_bytes_sent += ret;
+            sent++;
+        }
+    }
+
+    /* TCP server - send to connected client */
+    if (ctx->tcp_client_fd >= 0) {
+        /* Send length prefix (4 bytes) + data for framing */
+        uint32_t pkt_len = htonl((uint32_t)len);
+        ret = send(ctx->tcp_client_fd, &pkt_len, sizeof(pkt_len), MSG_NOSIGNAL);
+        if (ret > 0) {
+            ret = send(ctx->tcp_client_fd, data, len, MSG_NOSIGNAL);
+        }
+        if (ret < 0) {
+            if (errno == EPIPE || errno == ECONNRESET) {
+                printf("[NET] TCP client disconnected\n");
+                close(ctx->tcp_client_fd);
+                ctx->tcp_client_fd = -1;
+            } else {
+                if (ctx->verbose)
+                    perror("send(TCP server)");
+                ctx->net_send_errors++;
+            }
+        } else {
+            ctx->net_packets_sent++;
+            ctx->net_bytes_sent += len;
+            sent++;
+        }
+    }
+
+    /* TCP client - send to connected server */
+    if (ctx->tcp_connect_sock >= 0) {
+        /* Send length prefix (4 bytes) + data for framing */
+        uint32_t pkt_len = htonl((uint32_t)len);
+        ret = send(ctx->tcp_connect_sock, &pkt_len, sizeof(pkt_len), MSG_NOSIGNAL);
+        if (ret > 0) {
+            ret = send(ctx->tcp_connect_sock, data, len, MSG_NOSIGNAL);
+        }
+        if (ret < 0) {
+            if (errno == EPIPE || errno == ECONNRESET) {
+                printf("[NET] TCP connection lost\n");
+                close(ctx->tcp_connect_sock);
+                ctx->tcp_connect_sock = -1;
+            } else {
+                if (ctx->verbose)
+                    perror("send(TCP client)");
+                ctx->net_send_errors++;
+            }
+        } else {
+            ctx->net_packets_sent++;
+            ctx->net_bytes_sent += len;
+            sent++;
+        }
+    }
+
+    return sent;
+}
+
+/*
+ * Clean up all network resources
+ */
+static void cleanup_network(struct app_context *ctx)
+{
+    if (ctx->udp_sock >= 0) {
+        close(ctx->udp_sock);
+        ctx->udp_sock = -1;
+    }
+    if (ctx->tcp_client_fd >= 0) {
+        close(ctx->tcp_client_fd);
+        ctx->tcp_client_fd = -1;
+    }
+    if (ctx->tcp_server_sock >= 0) {
+        close(ctx->tcp_server_sock);
+        ctx->tcp_server_sock = -1;
+    }
+    if (ctx->tcp_connect_sock >= 0) {
+        close(ctx->tcp_connect_sock);
+        ctx->tcp_connect_sock = -1;
+    }
 }
 
 /* ------------------------------------------------------------------------ */
@@ -195,6 +491,12 @@ int main(int argc, char *argv[])
     ctx.validate_crc = true;
     ctx.running = true;
 
+    /* Initialize network socket fds to disabled */
+    ctx.udp_sock = -1;
+    ctx.tcp_server_sock = -1;
+    ctx.tcp_client_fd = -1;
+    ctx.tcp_connect_sock = -1;
+
     /* Set up global context for signal handler */
     g_ctx = &ctx;
 
@@ -207,6 +509,19 @@ int main(int argc, char *argv[])
     /* Install signal handlers for graceful shutdown */
     signal(SIGINT, signal_handler);
     signal(SIGTERM, signal_handler);
+
+    /* Set up network streaming if requested */
+    if (ctx.tcp_server_port > 0) {
+        if (setup_tcp_server(&ctx, ctx.tcp_server_port) < 0) {
+            return 1;
+        }
+    }
+    if (ctx.tcp_connect_port > 0) {
+        if (setup_tcp_client(&ctx, ctx.tcp_connect_host, ctx.tcp_connect_port) < 0) {
+            cleanup_network(&ctx);
+            return 1;
+        }
+    }
 
     /* Open the device */
     ret = open_device(&ctx);
@@ -260,6 +575,12 @@ int main(int argc, char *argv[])
            "full (64B)");
     printf("  Packet rate:      %u Hz\n", ctx.pkt_rate);
     printf("  CRC validation:   %s\n", ctx.validate_crc ? "enabled" : "disabled");
+    if (ctx.udp_sock >= 0)
+        printf("  UDP streaming:    enabled\n");
+    if (ctx.tcp_server_sock >= 0)
+        printf("  TCP server:       port %u (waiting for client)\n", ctx.tcp_server_port);
+    if (ctx.tcp_connect_sock >= 0)
+        printf("  TCP client:       connected to %s:%u\n", ctx.tcp_connect_host, ctx.tcp_connect_port);
     printf("Press Ctrl+C to stop.\n\n");
 
     /* Record start time for rate calculations */
@@ -308,6 +629,13 @@ static void print_usage(const char *prog_name)
     printf("  -h, --help            Show this help message\n");
     printf("  --version             Show version information\n");
     printf("\n");
+    printf("Network Streaming:\n");
+    printf("  --udp HOST:PORT       Stream packets via UDP to HOST:PORT\n");
+    printf("  --tcp-server PORT     Listen for TCP connections on PORT\n");
+    printf("  --tcp-client HOST:PORT Connect to TCP server at HOST:PORT\n");
+    printf("\n");
+    printf("  QEMU: Host is at 10.0.2.2, ports 5000-5009 forwarded (TCP+UDP).\n");
+    printf("\n");
     printf("Header Profiles:\n");
     printf("  simple   - 16 bytes: magic, sequence, size\n");
     printf("  standard - 32 bytes: + timestamp, counter, header CRC\n");
@@ -317,6 +645,16 @@ static void print_usage(const char *prog_name)
     printf("  %s --rate 1000 --size 256 --profile standard\n", prog_name);
     printf("  %s --rate 10000 --size 64 --variable --size-max 512 --profile full\n", prog_name);
     printf("  %s --stats\n", prog_name);
+    printf("\n");
+    printf("Network streaming examples (from inside QEMU VM):\n");
+    printf("  # UDP to host: on host run 'nc -u -l 5001', then in VM:\n");
+    printf("  %s --udp 10.0.2.2:5001\n", prog_name);
+    printf("\n");
+    printf("  # TCP server: run app, then from host 'nc localhost 5000'\n");
+    printf("  %s --tcp-server 5000\n", prog_name);
+    printf("\n");
+    printf("  # TCP client: on host run 'nc -l 5555', then in VM:\n");
+    printf("  %s --tcp-client 10.0.2.2:5555\n", prog_name);
     printf("\n");
 }
 
@@ -334,6 +672,9 @@ static int parse_arguments(int argc, char *argv[], struct app_context *ctx)
         {"verbose",    no_argument,       0, 'V'},
         {"help",       no_argument,       0, 'h'},
         {"version",    no_argument,       0, 0x100},
+        {"udp",        required_argument, 0, 0x101},
+        {"tcp-server", required_argument, 0, 0x102},
+        {"tcp-client", required_argument, 0, 0x103},
         {0, 0, 0, 0}
     };
 
@@ -385,6 +726,33 @@ static int parse_arguments(int argc, char *argv[], struct app_context *ctx)
         case 0x100:  /* --version */
             printf("%s version %s\n", APP_NAME, APP_VERSION);
             return 1;
+        case 0x101:  /* --udp HOST:PORT */
+            if (setup_udp_streaming(ctx, optarg) < 0)
+                return -1;
+            break;
+        case 0x102:  /* --tcp-server PORT */
+            ctx->tcp_server_port = (uint16_t)strtoul(optarg, NULL, 10);
+            if (ctx->tcp_server_port == 0) {
+                fprintf(stderr, "Invalid TCP server port: %s\n", optarg);
+                return -1;
+            }
+            break;
+        case 0x103:  /* --tcp-client HOST:PORT */
+            {
+                char *colon = strrchr(optarg, ':');
+                if (!colon) {
+                    fprintf(stderr, "Invalid format for --tcp-client, use HOST:PORT\n");
+                    return -1;
+                }
+                *colon = '\0';
+                strncpy(ctx->tcp_connect_host, optarg, sizeof(ctx->tcp_connect_host) - 1);
+                ctx->tcp_connect_port = (uint16_t)strtoul(colon + 1, NULL, 10);
+                if (ctx->tcp_connect_port == 0) {
+                    fprintf(stderr, "Invalid TCP client port: %s\n", colon + 1);
+                    return -1;
+                }
+            }
+            break;
         default:
             print_usage(argv[0]);
             return -1;
@@ -614,8 +982,11 @@ static void main_loop(struct app_context *ctx)
 
     fprintf(stderr, "TODO: Implement main_loop()\n");
 
-    /* Placeholder loop */
+    /* Placeholder loop - trainees will implement proper poll-based processing */
     while (ctx->running) {
+        /* Accept pending TCP clients (non-blocking) */
+        accept_tcp_client(ctx);
+
         sleep(1);
         if (ctx->verbose) {
             print_statistics(ctx);
@@ -628,6 +999,8 @@ static void main_loop(struct app_context *ctx)
 /* Packet Processing                                                        */
 /* ------------------------------------------------------------------------ */
 
+/* Unused in skeleton - trainees will call this from main loop */
+__attribute__((unused))
 static int process_packet(struct app_context *ctx, const void *buffer, uint32_t actual_len)
 {
     /*
@@ -650,6 +1023,9 @@ static int process_packet(struct app_context *ctx, const void *buffer, uint32_t 
      *       const struct phantomfpga_hdr_simple *hdr = buffer;
      *       printf("Packet %u: size=%u\n", hdr->sequence, hdr->size);
      *   }
+     *
+     * 4. Stream packet over network if enabled:
+     *   stream_packet(ctx, buffer, actual_len);
      */
 
     /* --- YOUR CODE HERE --- */
@@ -657,10 +1033,16 @@ static int process_packet(struct app_context *ctx, const void *buffer, uint32_t 
     (void)buffer;
     (void)actual_len;
     fprintf(stderr, "TODO: Implement process_packet()\n");
+
+    /* Network streaming - even without full implementation, stream the raw data */
+    stream_packet(ctx, buffer, actual_len);
+
     return 0;
     /* --- END YOUR CODE --- */
 }
 
+/* Unused in skeleton - trainees will call this from process_packet */
+__attribute__((unused))
 static bool validate_packet(struct app_context *ctx, const void *packet, uint32_t pkt_size)
 {
     /*
@@ -782,6 +1164,18 @@ static void print_statistics(struct app_context *ctx)
     printf("Magic errors:        %lu\n", (unsigned long)ctx->magic_errors);
     printf("Header CRC errors:   %lu\n", (unsigned long)ctx->hdr_crc_errors);
     printf("Payload CRC errors:  %lu\n", (unsigned long)ctx->pay_crc_errors);
+
+    /* Network statistics */
+    if (ctx->udp_sock >= 0 || ctx->tcp_server_sock >= 0 || ctx->tcp_connect_sock >= 0) {
+        printf("--- Network ---\n");
+        printf("Packets sent:        %lu\n", (unsigned long)ctx->net_packets_sent);
+        printf("Bytes sent:          %lu\n", (unsigned long)ctx->net_bytes_sent);
+        printf("Send errors:         %lu\n", (unsigned long)ctx->net_send_errors);
+        if (ctx->tcp_server_sock >= 0) {
+            printf("TCP client:          %s\n",
+                   ctx->tcp_client_fd >= 0 ? "connected" : "waiting");
+        }
+    }
     /* --- END YOUR CODE --- */
 }
 
@@ -791,6 +1185,9 @@ static void print_statistics(struct app_context *ctx)
 
 static void cleanup(struct app_context *ctx)
 {
+    /* Clean up network connections */
+    cleanup_network(ctx);
+
     /* Unmap the buffer pool */
     if (ctx->buffer_pool && ctx->buffer_pool != MAP_FAILED) {
         munmap(ctx->buffer_pool, ctx->buffer_pool_size);

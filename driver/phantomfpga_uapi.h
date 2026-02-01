@@ -181,13 +181,15 @@ struct phantomfpga_fault_cfg {
 	__u32 reserved[4];    /* Reserved for future use */
 };
 
-/* Fault injection flag bits */
+/* Fault injection flag bits (guarded - may be defined in regs.h with BIT()) */
+#ifndef PHANTOMFPGA_FAULT_DROP_PACKET
 #define PHANTOMFPGA_FAULT_DROP_PACKET     (1 << 0)
 #define PHANTOMFPGA_FAULT_CORRUPT_HDR_CRC (1 << 1)
 #define PHANTOMFPGA_FAULT_CORRUPT_PAY_CRC (1 << 2)
 #define PHANTOMFPGA_FAULT_CORRUPT_PAYLOAD (1 << 3)
 #define PHANTOMFPGA_FAULT_CORRUPT_SEQ     (1 << 4)
 #define PHANTOMFPGA_FAULT_DELAY_IRQ       (1 << 5)
+#endif
 
 /* ------------------------------------------------------------------------ */
 /* IOCTL Commands                                                           */
@@ -310,7 +312,10 @@ struct phantomfpga_fault_cfg {
 
 /* ------------------------------------------------------------------------ */
 /* Packet Header Structures (for userspace parsing)                         */
+/* Note: If kernel regs.h was included first, skip these (it has __packed)  */
 /* ------------------------------------------------------------------------ */
+
+#ifndef PHANTOMFPGA_REGS_H  /* Only define if regs.h wasn't included first */
 
 /*
  * These structures match what the device writes at the start of each packet.
@@ -320,7 +325,9 @@ struct phantomfpga_fault_cfg {
  */
 
 /* Magic value at start of every packet */
+#ifndef PHANTOMFPGA_PACKET_MAGIC
 #define PHANTOMFPGA_PACKET_MAGIC  0xABCD1234
+#endif
 
 /*
  * Simple header (16 bytes) - Profile 0
@@ -383,5 +390,7 @@ struct phantomfpga_completion {
 #define PHANTOMFPGA_COMPL_OK        0
 #define PHANTOMFPGA_COMPL_ERR_DMA   1
 #define PHANTOMFPGA_COMPL_ERR_SIZE  2
+
+#endif /* PHANTOMFPGA_REGS_H */
 
 #endif /* PHANTOMFPGA_UAPI_H */

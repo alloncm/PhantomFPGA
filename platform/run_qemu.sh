@@ -104,6 +104,11 @@ GUEST ACCESS:
   SSH:   ssh -p ${SSH_PORT} root@localhost  (password: root)
   GDB:   gdb -ex "target remote :${GDB_PORT}"  (when --debug is used)
 
+NETWORK:
+  Forwarded ports (TCP and UDP): 5000-5009
+  From guest, host is at: 10.0.2.2
+  Example: nc -l 5000 on host, nc 10.0.2.2 5000 from guest
+
 SHARED DIRECTORIES:
   The driver/ and app/ directories are mounted in the guest via 9p virtfs:
     mount -t 9p -o trans=virtio driver /mnt/driver
@@ -430,19 +435,24 @@ build_qemu_cmd() {
     # -------------------------------------------------------------------------
     # NETWORKING (-netdev, -device virtio-net-pci)
     # -------------------------------------------------------------------------
-    # QEMU user-mode networking: simple, no root required, but limited.
-    # The VM gets a private 10.0.2.x address and can access the internet
-    # through NAT. The host can't directly reach the VM, so we set up
-    # port forwarding for SSH.
+    # User-mode networking: simple, no root required.
+    # The VM gets a private 10.0.2.x address with NAT. Host can't directly
+    # reach the VM, so we set up port forwarding for SSH and test ports.
     #
-    # -netdev user,id=net0,hostfwd=tcp::2222-:22
-    #   Creates a user-mode network backend named "net0"
-    #   Forwards host port 2222 to guest port 22 (SSH)
+    # -netdev user,id=net0,hostfwd=tcp::2222-:22,...
+    #   Creates a user-mode network backend with NAT
+    #   Forwards specific ports from host to guest
     #
+    # Port range 5000-5009 forwarded for network streaming tests
+    # From the guest, host is at 10.0.2.2
+    local portfwd="hostfwd=tcp::${SSH_PORT}-:22"
+    for p in 5000 5001 5002 5003 5004 5005 5006 5007 5008 5009; do
+        portfwd+=",hostfwd=tcp::${p}-:${p},hostfwd=udp::${p}-:${p}"
+    done
+    cmd+=(-netdev "user,id=net0,${portfwd}")
     # -device virtio-net-pci,netdev=net0
     #   Creates a virtio network card connected to "net0"
     #   virtio is faster than emulating real hardware (e1000, rtl8139)
-    cmd+=(-netdev "user,id=net0,hostfwd=tcp::${SSH_PORT}-:22")
     cmd+=(-device virtio-net-pci,netdev=net0)
 
     # -------------------------------------------------------------------------
@@ -540,7 +550,7 @@ main() {
     info "  KVM:       $([ "${ENABLE_KVM}" -eq 1 ] && echo "enabled" || echo "disabled")"
     info "  Headless:  $([ "${HEADLESS}" -eq 1 ] && echo "yes" || echo "no")"
     info "  Debug:     $([ "${DEBUG_MODE}" -eq 1 ] && echo "yes (port ${GDB_PORT})" || echo "no")"
-    info "  SSH:       localhost:${SSH_PORT}"
+    info "  SSH:       ssh -p ${SSH_PORT} root@localhost"
     info ""
     info "Starting QEMU..."
     info "  (Press Ctrl-A X to exit in headless mode)"
