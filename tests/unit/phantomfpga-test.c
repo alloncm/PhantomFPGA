@@ -26,7 +26,7 @@
 /* The source of truth is the QEMU device, but we need these here too       */
 /* ------------------------------------------------------------------------ */
 
-#define PHANTOMFPGA_VENDOR_ID       0x1DAD
+#define PHANTOMFPGA_VENDOR_ID       0x0DAD
 #define PHANTOMFPGA_DEVICE_ID       0xF00D
 
 #define PHANTOMFPGA_DEV_ID_VAL      0xF00DFACE

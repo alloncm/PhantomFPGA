@@ -21,9 +21,9 @@
 /* PCI Device Identification                                                */
 /* ------------------------------------------------------------------------ */
 
-#define PHANTOMFPGA_VENDOR_ID       0x1DAD
+#define PHANTOMFPGA_VENDOR_ID       0x0DAD
 #define PHANTOMFPGA_DEVICE_ID       0xF00D
-#define PHANTOMFPGA_SUBSYS_VENDOR   0x1DAD
+#define PHANTOMFPGA_SUBSYS_VENDOR   0x0DAD
 #define PHANTOMFPGA_SUBSYS_ID       0x0001
 #define PHANTOMFPGA_REVISION        0x02     /* Bumped for v2.0 */
 

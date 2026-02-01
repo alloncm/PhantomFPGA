@@ -12,9 +12,9 @@ refer to it approximately 47 times per implementation session.
 
 | Field | Value | Notes |
 |-------|-------|-------|
-| Vendor ID | 0x1DAD | "Dad" - because this device is here to teach you |
+| Vendor ID | 0x0DAD | "Dad" - because this device is here to teach you |
 | Device ID | 0xF00D | "Food" - frame data to consume |
-| Subsystem Vendor | 0x1DAD | |
+| Subsystem Vendor | 0x0DAD | |
 | Subsystem ID | 0x0001 | |
 | Revision | 0x01 | Version 1 |
 | Class | 0xFF0000 | "Other" device class |

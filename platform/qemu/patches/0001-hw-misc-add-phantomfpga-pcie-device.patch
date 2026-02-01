@@ -13,7 +13,7 @@ Features:
 - Simulated frame generation at configurable rates
 - Host-side watermark interrupts for efficient polling
 
-The device appears as PCI vendor 0x1DAD, device 0xF00D.
+The device appears as PCI vendor 0x0DAD, device 0xF00D.
 Because every good fake FPGA needs a dad joke in its PCI ID.
 
 Signed-off-by: PhantomFPGA Project <phantom@localhost>

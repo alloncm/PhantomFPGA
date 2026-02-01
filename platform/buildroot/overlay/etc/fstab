@@ -19,8 +19,8 @@ debugfs         /sys/kernel/debug  debugfs  defaults  0  0
 # These allow editing driver/app source on the host while building in guest
 #
 # Mount tags are defined in run_qemu.sh:
-#   -virtfs local,path=driver,mount_tag=driver_share,security_model=mapped-xattr
-#   -virtfs local,path=app,mount_tag=app_share,security_model=mapped-xattr
+#   -virtfs local,path=driver,mount_tag=driver,security_model=mapped-xattr
+#   -virtfs local,path=app,mount_tag=app,security_model=mapped-xattr
 #
-driver_share    /mnt/driver    9p      trans=virtio,version=9p2000.L,msize=104857600,nofail  0  0
-app_share       /mnt/app       9p      trans=virtio,version=9p2000.L,msize=104857600,nofail  0  0
+driver          /mnt/driver    9p      trans=virtio,version=9p2000.L,msize=104857600,nofail  0  0
+app             /mnt/app       9p      trans=virtio,version=9p2000.L,msize=104857600,nofail  0  0

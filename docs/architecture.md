@@ -65,7 +65,7 @@ The virtual PCIe device that simulates an FPGA frame producer. Key features:
 
 | Feature | Description |
 |---------|-------------|
-| PCI ID | Vendor 0x1DAD, Device 0xF00D |
+| PCI ID | Vendor 0x0DAD, Device 0xF00D |
 | BAR0 | 4KB MMIO register space |
 | MSI-X | 2 vectors (watermark, overrun) |
 | DMA | Bus-master writes to guest memory |

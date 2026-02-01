@@ -185,6 +185,16 @@ check_prerequisites() {
         fi
     fi
 
+    # Check if SSH port is available
+    if nc -z localhost "${SSH_PORT}" 2>/dev/null; then
+        error "Port ${SSH_PORT} is already in use"
+        error "  Another QEMU instance may be running. Kill it with:"
+        error "    pkill qemu-system"
+        error "  Or use a different port:"
+        error "    $(basename "$0") --ssh-port 2223"
+        missing=1
+    fi
+
     if [[ "${missing}" -eq 1 ]]; then
         die "Missing prerequisites. See errors above."
     fi

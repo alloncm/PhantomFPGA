@@ -22,9 +22,9 @@
 /* "Hello, my name is..."                                                   */
 /* ------------------------------------------------------------------------ */
 
-#define PHANTOMFPGA_VENDOR_ID       0x1DAD   /* One DAD to rule them all */
+#define PHANTOMFPGA_VENDOR_ID       0x0DAD   /* Oh DAD - unassigned vendor ID */
 #define PHANTOMFPGA_DEVICE_ID       0xF00D   /* What every programmer needs */
-#define PHANTOMFPGA_SUBSYS_VENDOR   0x1DAD
+#define PHANTOMFPGA_SUBSYS_VENDOR   0x0DAD
 #define PHANTOMFPGA_SUBSYS_ID       0x0002   /* SG-DMA edition */
 #define PHANTOMFPGA_REVISION        0x02
 

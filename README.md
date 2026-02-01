@@ -44,7 +44,7 @@ The device simulates an FPGA that captures frames at configurable rates and DMAs
 
 ## Features
 
-- **Virtual PCIe Device**: Full PCIe device model in QEMU with vendor ID 0x1DAD and device ID 0xF00D (because every project needs dad jokes in the PCI IDs)
+- **Virtual PCIe Device**: Full PCIe device model in QEMU with vendor ID 0x0DAD and device ID 0xF00D (because every project needs dad jokes in the PCI IDs)
 - **DMA Ring Buffer**: Real DMA transfers to guest memory, just like actual hardware
 - **MSI-X Interrupts**: Two vectors - one for "hey, you have data" and one for "oops, buffer overrun"
 - **Configurable Everything**: Frame size, rate, ring depth, watermark thresholds
@@ -181,33 +181,38 @@ Login as `root` with password `root`.
 Inside the VM, run:
 
 ```bash
-lspci | grep -i 1dad
+lspci -nn | grep -i 0dad
 ```
 
-**Expected output:**
+**Expected output (slot may vary):**
 ```
-00:04.0 Unclassified device [00ff]: Device 1dad:f00d
+00:02.0 Unclassified device [00ff]: Device [0dad:f00d] (rev 02)
 ```
 
-There it is! Device 1dad:f00d. That's "DAD" and "FOOD" in hex. I'm not sorry.
+There it is! Device 0dad:f00d. That's our "DAD" serving "FOOD" in hex. I'm not sorry.
+
+**Note:** The PCI slot (00:02.0 in this example) can vary depending on your QEMU version and what other devices are configured. Use whatever slot `lspci` shows you.
 
 Let's read the device ID register to make sure it's really our device:
 
 ```bash
-# Find the BAR0 address
-lspci -v -s 00:04.0 | grep "Memory at"
-# Example output: Memory at feb50000 (32-bit, non-prefetchable) [size=4K]
+# Find the BAR0 address (use YOUR slot from lspci above)
+lspci -v -s 00:02.0 | grep "Memory at"
+# Example output: Memory at febd1000 (32-bit, non-prefetchable) [size=4K]
 
 # Read the device ID register (at offset 0x000)
-devmem2 0xfeb50000 w
+# Use the address from the output above
+devmem 0xfebd1000 w
 ```
 
 **Expected output:**
 ```
-Value at address 0xFEB50000: 0xF00DFACE
+0xF00DFACE
 ```
 
 `0xF00DFACE` - that's the device's way of saying hello. If you see this, your fake FPGA is alive and happy!
+
+**Note:** We use `devmem` (busybox's memory access tool) rather than `devmem2`. Same idea, slightly different output format.
 
 ## Now What? The Fun Part!
 

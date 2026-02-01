@@ -223,8 +223,8 @@ test_ioctl_get_stats() {
 
 # Test: Check PCI device is visible
 test_pci_device() {
-    # PhantomFPGA uses vendor 0x1DAD, device 0xF00D
-    if lspci -nn 2>/dev/null | grep -q "1dad:f00d"; then
+    # PhantomFPGA uses vendor 0x0DAD, device 0xF00D
+    if lspci -nn 2>/dev/null | grep -q "0dad:f00d"; then
         return 0
     fi
     # Alternative: check if driver has bound to any device
