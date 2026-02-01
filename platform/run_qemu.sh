@@ -1,49 +1,78 @@
 #!/bin/bash
 #
 # PhantomFPGA VM Launcher
+# =======================
 #
-# Launch the QEMU-based training VM with the PhantomFPGA PCIe device.
-# Provides various modes for development, debugging, and CI.
+# This script launches a QEMU virtual machine with our custom PhantomFPGA
+# PCIe device. But here's the thing: in real life, you won't have a nice
+# script like this. You'll be staring at QEMU documentation, wondering why
+# your VM won't boot, and questioning your career choices.
+#
+# So please, READ THIS SCRIPT. Understand what each flag does. The comments
+# below explain everything - treat this as a QEMU tutorial, not a black box.
+#
+# When you're debugging real hardware issues, you'll need to know:
+#   - How QEMU emulates different machine types
+#   - How virtio devices work
+#   - How to set up host-guest communication
+#   - How to attach debuggers to running VMs
+#
+# TL;DR: Don't just run this script. Understand it. Your future self will
+# thank you when something breaks at 2 AM.
 #
 # "May your registers be responsive and your interrupts timely."
 #
 
-set -e
+set -e  # Exit on first error - fail fast, debug faster
 
-# -----------------------------------------------------------------------------
-# Configuration defaults
-# -----------------------------------------------------------------------------
+# =============================================================================
+# PATH SETUP
+# =============================================================================
+#
+# We need to find our project files. In shell scripts, figuring out "where
+# am I?" is surprisingly tricky. BASH_SOURCE[0] gives us the script's path
+# even when sourced, and we use cd+pwd to resolve symlinks.
+
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
 
-# Target architecture: x86_64 (default) or aarch64
-TARGET_ARCH="x86_64"
+# =============================================================================
+# DEFAULT CONFIGURATION
+# =============================================================================
+#
+# These defaults work for most development scenarios. Override them with
+# command-line flags when needed.
 
-# Paths (relative to project root) - will be set based on architecture
+TARGET_ARCH="x86_64"          # Also supports "aarch64" for ARM64
+
 QEMU_BUILD="${PROJECT_ROOT}/platform/qemu/build"
 DRIVER_DIR="${PROJECT_ROOT}/driver"
 APP_DIR="${PROJECT_ROOT}/app"
 
-# These get set after parsing args (depend on TARGET_ARCH)
+# These get set based on architecture (see setup_arch_paths)
 QEMU_BIN=""
 KERNEL_IMAGE=""
 ROOTFS_IMAGE=""
 
-# VM configuration defaults
+# VM resources - 2G RAM and 2 CPUs is plenty for driver development
 MEMORY="2G"
 CPUS="2"
+
+# Port forwarding - we map host:2222 -> guest:22 for SSH access
+# This is QEMU user-mode networking, no root required
 SSH_PORT="2222"
 GDB_PORT="1234"
 
 # Mode flags
-HEADLESS=0
-DEBUG_MODE=0
-ENABLE_KVM=1
-EXTRA_ARGS=()
+HEADLESS=0      # Set to 1 for CI/automated testing (no display)
+DEBUG_MODE=0    # Set to 1 to enable GDB server
+ENABLE_KVM=1    # KVM makes things MUCH faster when available
+EXTRA_ARGS=()   # Additional args passed through to QEMU
 
-# -----------------------------------------------------------------------------
-# Help text
-# -----------------------------------------------------------------------------
+# =============================================================================
+# HELP TEXT
+# =============================================================================
+
 show_help() {
     cat << EOF
 PhantomFPGA VM Launcher
@@ -82,17 +111,22 @@ SHARED DIRECTORIES:
 
   (These should be auto-mounted at boot via /etc/fstab in the guest)
 
-TROUBLESHOOTING:
-  - "Could not access KVM kernel module": Run with --no-kvm or load kvm module
-  - Images not found: Run the build first (see platform/buildroot/)
-  - QEMU not found: Build QEMU first (see platform/qemu/setup.sh)
+WANT TO UNDERSTAND WHAT THIS SCRIPT DOES?
+  Read the source! It's heavily commented to explain each QEMU option.
+  Real driver developers need to understand their tools, not just use them.
+
+  Key sections to study:
+    - build_qemu_cmd()     How the QEMU command line is constructed
+    - setup_arch_paths()   Architecture-specific settings
+    - check_prerequisites() What needs to be in place before running
 
 EOF
 }
 
-# -----------------------------------------------------------------------------
-# Logging helpers
-# -----------------------------------------------------------------------------
+# =============================================================================
+# LOGGING HELPERS
+# =============================================================================
+
 info() {
     echo "[*] $*"
 }
@@ -110,9 +144,26 @@ warn() {
     echo "[WARN] $*" >&2
 }
 
-# -----------------------------------------------------------------------------
-# Architecture-specific configuration
-# -----------------------------------------------------------------------------
+# =============================================================================
+# ARCHITECTURE-SPECIFIC CONFIGURATION
+# =============================================================================
+#
+# Different CPU architectures need different QEMU configurations. This is
+# something you'll encounter constantly in embedded development - the same
+# concepts (machine type, CPU model, console device) vary by platform.
+#
+# x86_64 (Intel/AMD):
+#   - Machine: q35 - Modern Intel chipset with PCIe support
+#   - CPU: Nehalem - A well-supported Intel CPU model
+#   - Console: ttyS0 - Standard PC serial port
+#   - Kernel: bzImage - Compressed x86 kernel format
+#
+# aarch64 (ARM64):
+#   - Machine: virt - ARM's generic virtual platform
+#   - CPU: cortex-a72 - Common ARM server CPU
+#   - Console: ttyAMA0 - ARM PrimeCell UART
+#   - Kernel: Image - Uncompressed ARM64 kernel
+
 setup_arch_paths() {
     QEMU_BIN="${QEMU_BUILD}/qemu-system-${TARGET_ARCH}"
 
@@ -120,48 +171,53 @@ setup_arch_paths() {
         x86_64)
             KERNEL_IMAGE="${PROJECT_ROOT}/platform/images/bzImage"
             ROOTFS_IMAGE="${PROJECT_ROOT}/platform/images/rootfs.ext4"
-            MACHINE_TYPE="q35"
-            CPU_TYPE="Nehalem"
-            CONSOLE="ttyS0"
+            MACHINE_TYPE="q35"      # Modern Intel chipset, supports PCIe
+            CPU_TYPE="Nehalem"      # Works without KVM, has enough features
+            CONSOLE="ttyS0"         # Standard PC serial port
             ;;
         aarch64)
             KERNEL_IMAGE="${PROJECT_ROOT}/platform/images/Image"
             ROOTFS_IMAGE="${PROJECT_ROOT}/platform/images/rootfs-aarch64.ext4"
-            MACHINE_TYPE="virt"
-            CPU_TYPE="cortex-a72"
-            CONSOLE="ttyAMA0"
+            MACHINE_TYPE="virt"     # ARM's generic virtualization platform
+            CPU_TYPE="cortex-a72"   # Good balance of features and compatibility
+            CONSOLE="ttyAMA0"       # ARM PrimeCell UART
             ;;
     esac
 }
 
-# -----------------------------------------------------------------------------
-# Validation
-# -----------------------------------------------------------------------------
+# =============================================================================
+# PREREQUISITE CHECKS
+# =============================================================================
+#
+# Before launching QEMU, we verify everything is in place. This saves you
+# from cryptic QEMU error messages. In production, you'd have similar
+# checks in your test harnesses and CI pipelines.
+
 check_prerequisites() {
     local missing=0
 
-    # Check QEMU binary
+    # Check QEMU binary exists and is executable
     if [[ ! -x "${QEMU_BIN}" ]]; then
         error "QEMU binary not found: ${QEMU_BIN}"
         error "  Build it with: cd platform/qemu && ./setup.sh && make -C build"
         missing=1
     fi
 
-    # Check kernel image
+    # Check kernel image - this is what boots inside the VM
     if [[ ! -f "${KERNEL_IMAGE}" ]]; then
         error "Kernel image not found: ${KERNEL_IMAGE}"
         error "  Build it with: cd platform/buildroot && make"
         missing=1
     fi
 
-    # Check rootfs image
+    # Check root filesystem - contains the userspace (busybox, ssh, etc.)
     if [[ ! -f "${ROOTFS_IMAGE}" ]]; then
         error "Root filesystem not found: ${ROOTFS_IMAGE}"
         error "  Build it with: cd platform/buildroot && make"
         missing=1
     fi
 
-    # Check shared directories exist
+    # Warn about missing shared directories (9p mounts will fail)
     if [[ ! -d "${DRIVER_DIR}" ]]; then
         warn "Driver directory not found: ${DRIVER_DIR}"
         warn "  9p mount for driver/ will fail in guest"
@@ -172,7 +228,10 @@ check_prerequisites() {
         warn "  9p mount for app/ will fail in guest"
     fi
 
-    # Check KVM availability if requested
+    # Check KVM availability
+    # KVM = Kernel-based Virtual Machine. When available, QEMU runs guest
+    # code directly on the CPU instead of emulating every instruction.
+    # This makes things 10-100x faster. On Linux, check /dev/kvm.
     if [[ "${ENABLE_KVM}" -eq 1 ]]; then
         if [[ ! -e /dev/kvm ]]; then
             warn "KVM not available (/dev/kvm not found)"
@@ -185,7 +244,8 @@ check_prerequisites() {
         fi
     fi
 
-    # Check if SSH port is available
+    # Check if SSH port is available - catch the "port already in use" error
+    # before QEMU gives us a cryptic message
     if nc -z localhost "${SSH_PORT}" 2>/dev/null; then
         error "Port ${SSH_PORT} is already in use"
         error "  Another QEMU instance may be running. Kill it with:"
@@ -200,9 +260,10 @@ check_prerequisites() {
     fi
 }
 
-# -----------------------------------------------------------------------------
-# Parse command line arguments
-# -----------------------------------------------------------------------------
+# =============================================================================
+# ARGUMENT PARSING
+# =============================================================================
+
 parse_args() {
     while [[ $# -gt 0 ]]; do
         case "$1" in
@@ -250,7 +311,6 @@ parse_args() {
                 die "Unknown option: $1 (use --help for usage)"
                 ;;
             *)
-                # Treat as extra arg
                 EXTRA_ARGS+=("$1")
                 shift
                 ;;
@@ -258,48 +318,151 @@ parse_args() {
     done
 }
 
-# -----------------------------------------------------------------------------
-# Build QEMU command
-# -----------------------------------------------------------------------------
+# =============================================================================
+# BUILD QEMU COMMAND
+# =============================================================================
+#
+# This is the heart of the script. Each QEMU flag is explained below.
+# Understanding these options is essential for debugging VM issues.
+#
+# The QEMU command we're building looks something like:
+#
+#   qemu-system-x86_64 \
+#     -L /path/to/pc-bios \           # Where to find firmware files
+#     -machine q35 \                   # Emulate this machine/chipset
+#     -enable-kvm \                    # Use hardware virtualization
+#     -cpu host \                      # Pass through host CPU features
+#     -m 2G \                          # 2 GB of RAM
+#     -smp 2 \                         # 2 virtual CPUs
+#     -kernel /path/to/bzImage \       # Boot this kernel directly
+#     -drive file=rootfs.ext4,... \    # Root filesystem
+#     -append "root=/dev/vda ..." \    # Kernel command line
+#     -device phantomfpga \            # Our custom PCIe device!
+#     -netdev user,... \               # User-mode networking
+#     -device virtio-net-pci,... \     # Virtual network card
+#     -virtfs local,... \              # Host directory sharing
+#     -nographic                       # No GUI, serial console only
+#
+
 build_qemu_cmd() {
     local cmd=("${QEMU_BIN}")
 
-    # BIOS/firmware directory (needed when running from build dir)
+    # -------------------------------------------------------------------------
+    # FIRMWARE PATH (-L)
+    # -------------------------------------------------------------------------
+    # QEMU needs BIOS/firmware files (SeaBIOS for x86, etc.). When running
+    # from a build directory, we need to tell it where these are.
     cmd+=(-L "${QEMU_BUILD}/pc-bios")
 
-    # Machine type (architecture-specific)
+    # -------------------------------------------------------------------------
+    # MACHINE TYPE (-machine)
+    # -------------------------------------------------------------------------
+    # This selects which hardware platform to emulate. Different machines
+    # have different buses, interrupt controllers, and device layouts.
+    #
+    # For x86_64, "q35" is a modern Intel chipset with:
+    #   - PCIe bus (not just PCI) - important for our PCIe device!
+    #   - AHCI SATA controller
+    #   - Modern interrupt routing (MSI/MSI-X support)
+    #
+    # For aarch64, "virt" is a minimal machine designed for virtualization.
     cmd+=(-machine "${MACHINE_TYPE}")
 
-    # CPU type
+    # -------------------------------------------------------------------------
+    # CPU MODEL (-cpu) and KVM (-enable-kvm)
+    # -------------------------------------------------------------------------
+    # With KVM enabled, guest code runs directly on the CPU. We use "-cpu host"
+    # to expose all host CPU features to the guest.
+    #
+    # Without KVM, QEMU emulates every instruction in software. We use a
+    # well-known CPU model (Nehalem for x86) that QEMU emulates accurately.
     if [[ "${ENABLE_KVM}" -eq 1 ]]; then
         cmd+=(-enable-kvm)
-        # Use host CPU when KVM is available
         if [[ "${TARGET_ARCH}" == "x86_64" ]]; then
-            cmd+=(-cpu host)
+            cmd+=(-cpu host)  # Use actual host CPU features
         else
             cmd+=(-cpu "${CPU_TYPE}")
         fi
     else
-        cmd+=(-cpu "${CPU_TYPE}")
+        cmd+=(-cpu "${CPU_TYPE}")  # Emulated CPU model
     fi
 
-    # Memory and CPUs
+    # -------------------------------------------------------------------------
+    # MEMORY AND CPUs (-m, -smp)
+    # -------------------------------------------------------------------------
+    # -m sets RAM size. Can use K, M, G suffixes.
+    # -smp sets the number of virtual CPUs.
+    #
+    # For driver development, 2G RAM and 2 CPUs is plenty. Increase if you
+    # need to test with more memory pressure or SMP-related issues.
     cmd+=(-m "${MEMORY}")
     cmd+=(-smp "${CPUS}")
 
-    # Kernel and root filesystem
+    # -------------------------------------------------------------------------
+    # KERNEL AND ROOTFS (-kernel, -drive, -append)
+    # -------------------------------------------------------------------------
+    # We boot the kernel directly (no bootloader). This is common for
+    # embedded development and testing - it's faster and simpler.
+    #
+    # -kernel: The Linux kernel image to boot
+    # -drive: The root filesystem (ext4 image), attached via virtio
+    # -append: Kernel command line arguments
+    #
+    # The kernel command line tells Linux:
+    #   root=/dev/vda   - Root filesystem is the virtio disk
+    #   console=ttyS0   - Use serial port for console output
     cmd+=(-kernel "${KERNEL_IMAGE}")
     cmd+=(-drive "file=${ROOTFS_IMAGE},format=raw,if=virtio")
     cmd+=(-append "root=/dev/vda console=${CONSOLE}")
 
-    # PhantomFPGA PCIe device - the star of the show
+    # -------------------------------------------------------------------------
+    # PHANTOMFPGA DEVICE (-device phantomfpga)
+    # -------------------------------------------------------------------------
+    # This is our custom PCIe device! It's defined in:
+    #   platform/qemu/src/hw/misc/phantomfpga.c
+    #
+    # QEMU's -device option instantiates a device model. Our device appears
+    # as a PCIe endpoint with vendor:device = 0x0DAD:0xF00D.
+    #
+    # This is the device you'll be writing a driver for!
     cmd+=(-device phantomfpga)
 
-    # Networking: user-mode with SSH port forwarding
+    # -------------------------------------------------------------------------
+    # NETWORKING (-netdev, -device virtio-net-pci)
+    # -------------------------------------------------------------------------
+    # QEMU user-mode networking: simple, no root required, but limited.
+    # The VM gets a private 10.0.2.x address and can access the internet
+    # through NAT. The host can't directly reach the VM, so we set up
+    # port forwarding for SSH.
+    #
+    # -netdev user,id=net0,hostfwd=tcp::2222-:22
+    #   Creates a user-mode network backend named "net0"
+    #   Forwards host port 2222 to guest port 22 (SSH)
+    #
+    # -device virtio-net-pci,netdev=net0
+    #   Creates a virtio network card connected to "net0"
+    #   virtio is faster than emulating real hardware (e1000, rtl8139)
     cmd+=(-netdev "user,id=net0,hostfwd=tcp::${SSH_PORT}-:22")
     cmd+=(-device virtio-net-pci,netdev=net0)
 
-    # 9p virtfs mounts for driver/ and app/ directories
+    # -------------------------------------------------------------------------
+    # DIRECTORY SHARING (-virtfs)
+    # -------------------------------------------------------------------------
+    # 9p/virtfs lets the guest mount directories from the host. This is
+    # incredibly useful for development - edit files on the host, build
+    # and test in the guest, without copying files back and forth.
+    #
+    # -virtfs local,path=...,mount_tag=driver,security_model=mapped-xattr
+    #   local          - Use the local filesystem
+    #   path=...       - Host directory to share
+    #   mount_tag=     - Name the guest uses to mount (like a volume label)
+    #   security_model - How to handle permissions (mapped-xattr stores
+    #                    guest permissions in extended attributes)
+    #
+    # In the guest, mount with:
+    #   mount -t 9p -o trans=virtio driver /mnt/driver
+    #
+    # Our guest's /etc/fstab auto-mounts these at boot.
     if [[ -d "${DRIVER_DIR}" ]]; then
         cmd+=(-virtfs "local,path=${DRIVER_DIR},mount_tag=driver,security_model=mapped-xattr")
     fi
@@ -307,15 +470,34 @@ build_qemu_cmd() {
         cmd+=(-virtfs "local,path=${APP_DIR},mount_tag=app,security_model=mapped-xattr")
     fi
 
-    # Display mode
+    # -------------------------------------------------------------------------
+    # DISPLAY MODE (-nographic, -serial)
+    # -------------------------------------------------------------------------
+    # -nographic: No graphical window, console I/O goes to terminal
+    #             Exit with Ctrl-A X
+    #
+    # -serial mon:stdio: Connect serial port to terminal, with QEMU monitor
+    #                    accessible via Ctrl-A C
+    #
+    # For headless CI, we want -nographic. For interactive development,
+    # we might want a window for graphical output plus serial on stdio.
     if [[ "${HEADLESS}" -eq 1 ]]; then
         cmd+=(-nographic)
     else
-        # Use serial console but keep graphical window
         cmd+=(-serial mon:stdio)
     fi
 
-    # Debug mode: GDB server
+    # -------------------------------------------------------------------------
+    # DEBUG MODE (-gdb, -S)
+    # -------------------------------------------------------------------------
+    # -gdb tcp::1234  - Start a GDB server on port 1234
+    # -S              - Don't start CPU at startup (wait for debugger)
+    #
+    # This lets you attach GDB and debug the kernel or your driver:
+    #   gdb vmlinux -ex "target remote :1234"
+    #
+    # You can set breakpoints, inspect memory, step through code - the
+    # whole nine yards. Essential for tracking down kernel panics.
     if [[ "${DEBUG_MODE}" -eq 1 ]]; then
         cmd+=(-gdb "tcp::${GDB_PORT}" -S)
         info "GDB server enabled on port ${GDB_PORT}"
@@ -323,18 +505,19 @@ build_qemu_cmd() {
         info "Connect with: gdb -ex 'target remote :${GDB_PORT}'"
     fi
 
-    # Extra arguments passed by user
+    # Pass through any extra arguments the user provided
     if [[ ${#EXTRA_ARGS[@]} -gt 0 ]]; then
         cmd+=("${EXTRA_ARGS[@]}")
     fi
 
-    # Return the command array via printf (newline-separated for safety)
+    # Return the command as newline-separated strings
     printf '%s\n' "${cmd[@]}"
 }
 
-# -----------------------------------------------------------------------------
-# Main
-# -----------------------------------------------------------------------------
+# =============================================================================
+# MAIN
+# =============================================================================
+
 main() {
     parse_args "$@"
     setup_arch_paths
@@ -348,7 +531,7 @@ main() {
     # Build the QEMU command
     mapfile -t qemu_cmd < <(build_qemu_cmd)
 
-    # Show what we're about to run
+    # Show configuration summary
     info "Configuration:"
     info "  Arch:      ${TARGET_ARCH}"
     info "  Machine:   ${MACHINE_TYPE}"
@@ -363,7 +546,7 @@ main() {
     info "  (Press Ctrl-A X to exit in headless mode)"
     info ""
 
-    # Run QEMU
+    # Replace this process with QEMU (exec = no fork)
     exec "${qemu_cmd[@]}"
 }
 

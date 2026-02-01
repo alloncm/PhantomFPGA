@@ -1,25 +1,112 @@
+# =============================================================================
 # PhantomFPGA Buildroot Makefile
-# Builds a minimal Linux guest for FPGA driver development training
+# =============================================================================
 #
-# Usage:
+# This Makefile builds a minimal Linux system for our QEMU-based training VM.
+# It wraps Buildroot, which is a tool for building embedded Linux systems.
+#
+# STOP! Before you run "make" and walk away, take a moment to understand
+# what's happening here. In real embedded work, you'll need to:
+#   - Customize kernel configs for your hardware
+#   - Add drivers and userspace tools
+#   - Debug build failures
+#   - Optimize image sizes
+#
+# This Makefile is your introduction to that world. Read the comments.
+#
+# =============================================================================
+# WHAT IS BUILDROOT?
+# =============================================================================
+#
+# Buildroot (https://buildroot.org) automates building:
+#   1. A cross-compiler toolchain (gcc for your target architecture)
+#   2. A Linux kernel (configured for your target)
+#   3. A root filesystem (with busybox, libraries, your packages)
+#
+# Why not just use your distro's kernel? Because:
+#   - Embedded systems need minimal, customized kernels
+#   - You need to cross-compile for different architectures
+#   - You control exactly what goes into the image
+#
+# =============================================================================
+# BUILD PROCESS OVERVIEW
+# =============================================================================
+#
+#   Download -> Extract -> Configure -> Build -> Output
+#
+# 1. DOWNLOAD: Fetch Buildroot tarball (once, cached in dl/)
+# 2. EXTRACT:  Unpack to buildroot/ directory
+# 3. CONFIGURE: Apply our defconfig (kernel, packages, settings)
+# 4. BUILD:    Compile everything (toolchain, kernel, rootfs)
+# 5. OUTPUT:   Copy kernel + rootfs to platform/images/
+#
+# We use "stamp files" (.stamps/) to track completed steps. If a step
+# is already done, we skip it. Delete a stamp to force re-running.
+#
+# =============================================================================
+# KEY CONCEPTS
+# =============================================================================
+#
+# DEFCONFIG:
+#   A minimal config file listing only non-default options. Buildroot
+#   expands this into a full .config. Our defconfigs are in configs/.
+#   Edit with "make menuconfig", save with "make savedefconfig".
+#
+# OVERLAY:
+#   Files copied on top of the root filesystem. Our overlay/ directory
+#   contains custom configs like /etc/fstab. This is how you add files
+#   to the image without patching packages.
+#
+# OUT-OF-TREE BUILD (O=...):
+#   Buildroot outputs go to a separate directory, keeping source clean.
+#   We use output/x86_64/ and output/aarch64/ for multi-arch builds.
+#
+# BR2_* VARIABLES:
+#   Buildroot configuration variables. BR2_DL_DIR sets download cache,
+#   BR2_ROOTFS_OVERLAY sets overlay path, etc.
+#
+# =============================================================================
+# USAGE
+# =============================================================================
+#
 #   make              - Build x86_64 image (default)
 #   make aarch64      - Build aarch64 image
 #   make all-arches   - Build both architectures
-#   make help         - Show available targets
+#   make help         - Show all targets
+#   make menuconfig   - Edit Buildroot config interactively
+#   make info         - Show build status
 #
-# The build process downloads Buildroot, applies our defconfig, copies
-# overlay files, and produces kernel + rootfs for QEMU.
+# First build takes 30-60 minutes. Subsequent builds are faster.
 #
-# "Building embedded Linux images is like making a soufle: lots of waiting,
-# and you really don't want it to collapse at the end." -- Unknown Embedded Dev
+# =============================================================================
 
-# Configuration
+# -----------------------------------------------------------------------------
+# BUILDROOT VERSION
+# -----------------------------------------------------------------------------
+# We pin a specific version for reproducibility. Upgrading Buildroot can
+# change behavior, so we do it deliberately, not accidentally.
+
 BUILDROOT_VERSION := 2024.02.10
 BUILDROOT_TARBALL := buildroot-$(BUILDROOT_VERSION).tar.gz
 BUILDROOT_URL := https://buildroot.org/downloads/$(BUILDROOT_TARBALL)
 BUILDROOT_SHA256 := c2bfdd1d81d3a7f4e7c51458e0d7bc13b4f8c9cb13b99b6e20b9dd0b5d7e6a5f
 
-# Directories (relative to this Makefile)
+# -----------------------------------------------------------------------------
+# DIRECTORY LAYOUT
+# -----------------------------------------------------------------------------
+# Understanding where things go:
+#
+#   platform/buildroot/
+#   |-- Makefile          <- You are here
+#   |-- buildroot/        <- Extracted Buildroot source
+#   |-- configs/          <- Our defconfig files
+#   |-- overlay/          <- Files to add to rootfs
+#   |-- dl/               <- Downloaded tarballs (cached)
+#   |-- output/
+#   |   |-- x86_64/       <- x86_64 build output
+#   |   +-- aarch64/      <- aarch64 build output
+#   +-- .stamps/          <- Build progress markers
+
 MAKEFILE_DIR := $(shell dirname $(realpath $(lastword $(MAKEFILE_LIST))))
 TOP_DIR := $(realpath $(MAKEFILE_DIR)/../..)
 BR_DIR := $(MAKEFILE_DIR)/buildroot
@@ -30,14 +117,27 @@ CONFIG_DIR := $(MAKEFILE_DIR)/configs
 OVERLAY_DIR := $(MAKEFILE_DIR)/overlay
 IMAGES_DIR := $(TOP_DIR)/platform/images
 
-# Defconfig names
+# Our defconfig names - these files live in configs/
 DEFCONFIG_X86 := phantomfpga_x86_64_defconfig
 DEFCONFIG_ARM := phantomfpga_aarch64_defconfig
 
-# Build parallelism (use all cores by default, user can override)
+# -----------------------------------------------------------------------------
+# BUILD PARALLELISM
+# -----------------------------------------------------------------------------
+# Use all CPU cores by default. Override with: make NPROC=4
+# More cores = faster builds, but also more RAM usage.
+
 NPROC ?= $(shell nproc 2>/dev/null || sysctl -n hw.ncpu 2>/dev/null || echo 4)
 
-# Timestamp files for incremental builds
+# -----------------------------------------------------------------------------
+# STAMP FILES
+# -----------------------------------------------------------------------------
+# These empty files mark completed build stages. The file's existence (not
+# content) indicates the step is done. Delete a stamp to force re-running.
+#
+# This is a common pattern in Makefiles - much simpler than tracking all
+# the actual output files, which can number in the thousands.
+
 STAMP_DIR := $(MAKEFILE_DIR)/.stamps
 STAMP_DOWNLOAD := $(STAMP_DIR)/download
 STAMP_EXTRACT := $(STAMP_DIR)/extract
@@ -46,12 +146,17 @@ STAMP_CONFIG_ARM := $(STAMP_DIR)/config-aarch64
 STAMP_BUILD_X86 := $(STAMP_DIR)/build-x86_64
 STAMP_BUILD_ARM := $(STAMP_DIR)/build-aarch64
 
-# Output files
+# Final output files
 KERNEL_X86 := bzImage
 KERNEL_ARM := Image
 ROOTFS := rootfs.ext4
 
-# Terminal colors for pretty output (if stdout is a tty)
+# -----------------------------------------------------------------------------
+# PRETTY OUTPUT
+# -----------------------------------------------------------------------------
+# Colors make build output easier to scan. Disabled when not running in
+# a terminal (e.g., in CI logs).
+
 ifneq ($(TERM),)
   GREEN := \033[0;32m
   YELLOW := \033[0;33m
@@ -66,7 +171,12 @@ else
   NC :=
 endif
 
-# Verbose mode - set V=1 to see all commands
+# -----------------------------------------------------------------------------
+# VERBOSE MODE
+# -----------------------------------------------------------------------------
+# Set V=1 to see all commands: make V=1
+# By default, we hide command output and show progress messages.
+
 V ?= 0
 ifeq ($(V),1)
   Q :=
@@ -76,15 +186,15 @@ else
   QUIET := --quiet
 endif
 
-#==============================================================================
-# Default target: build x86_64
-#==============================================================================
+# =============================================================================
+# BUILD TARGETS
+# =============================================================================
+# The main targets you'll use. Each depends on its stamp file, which
+# depends on previous stages.
+
 .PHONY: all
 all: x86_64
 
-#==============================================================================
-# Architecture targets
-#==============================================================================
 .PHONY: x86_64
 x86_64: $(STAMP_BUILD_X86)
 	@echo "$(GREEN)==> x86_64 build complete!$(NC)"
@@ -101,9 +211,12 @@ aarch64: $(STAMP_BUILD_ARM)
 all-arches: x86_64 aarch64
 	@echo "$(GREEN)==> All architectures built successfully!$(NC)"
 
-#==============================================================================
-# Download Buildroot tarball
-#==============================================================================
+# =============================================================================
+# STAGE 1: DOWNLOAD
+# =============================================================================
+# Download Buildroot source tarball. Cached in dl/ for subsequent builds.
+# We try wget first, fall back to curl (macOS doesn't have wget by default).
+
 .PHONY: download
 download: $(STAMP_DOWNLOAD)
 
@@ -117,9 +230,12 @@ $(STAMP_DOWNLOAD): | $(DL_DIR) $(STAMP_DIR)
 	fi
 	@touch $@
 
-#==============================================================================
-# Extract Buildroot
-#==============================================================================
+# =============================================================================
+# STAGE 2: EXTRACT
+# =============================================================================
+# Unpack Buildroot source. We delete any existing extraction first to ensure
+# a clean state (important if switching versions).
+
 $(STAMP_EXTRACT): $(STAMP_DOWNLOAD)
 	@echo "$(BLUE)==> Extracting Buildroot...$(NC)"
 	$(Q)rm -rf "$(BR_DIR)"
@@ -128,9 +244,17 @@ $(STAMP_EXTRACT): $(STAMP_DOWNLOAD)
 		--one-top-level=buildroot
 	@touch $@
 
-#==============================================================================
-# Configure for x86_64
-#==============================================================================
+# =============================================================================
+# STAGE 3: CONFIGURE
+# =============================================================================
+# Apply our defconfig to create a full .config. This sets up:
+#   - Target architecture (x86_64 or aarch64)
+#   - Kernel version and config
+#   - Packages to include (busybox, openssh, etc.)
+#   - Rootfs format (ext4)
+#
+# We also append our overlay directory path to the config.
+
 .PHONY: configure-x86_64
 configure-x86_64: $(STAMP_CONFIG_X86)
 
@@ -141,13 +265,10 @@ $(STAMP_CONFIG_X86): $(STAMP_EXTRACT) | $(OUTPUT_X86)
 		BR2_EXTERNAL= \
 		BR2_DL_DIR="$(DL_DIR)" \
 		$(if $(filter 0,$(V)),>/dev/null 2>&1,)
-	@# Set overlay directory in generated config
+	@# Append overlay path - Buildroot copies these files into the rootfs
 	$(Q)echo 'BR2_ROOTFS_OVERLAY="$(OVERLAY_DIR)"' >> "$(OUTPUT_X86)/.config"
 	@touch $@
 
-#==============================================================================
-# Configure for aarch64
-#==============================================================================
 .PHONY: configure-aarch64
 configure-aarch64: $(STAMP_CONFIG_ARM)
 
@@ -158,13 +279,21 @@ $(STAMP_CONFIG_ARM): $(STAMP_EXTRACT) | $(OUTPUT_ARM)
 		BR2_EXTERNAL= \
 		BR2_DL_DIR="$(DL_DIR)" \
 		$(if $(filter 0,$(V)),>/dev/null 2>&1,)
-	@# Set overlay directory in generated config
 	$(Q)echo 'BR2_ROOTFS_OVERLAY="$(OVERLAY_DIR)"' >> "$(OUTPUT_ARM)/.config"
 	@touch $@
 
-#==============================================================================
-# Build x86_64
-#==============================================================================
+# =============================================================================
+# STAGE 4: BUILD
+# =============================================================================
+# The big one. This compiles:
+#   1. Cross-compiler toolchain (takes longest on first build)
+#   2. Linux kernel
+#   3. All selected packages
+#   4. Root filesystem image
+#
+# First build: 30-60 minutes. Incremental: much faster.
+# Output goes to output/<arch>/images/
+
 .PHONY: build-x86_64
 build-x86_64: $(STAMP_BUILD_X86)
 
@@ -181,9 +310,6 @@ endif
 	$(Q)cp "$(OUTPUT_X86)/images/$(ROOTFS)" "$(IMAGES_DIR)/"
 	@touch $@
 
-#==============================================================================
-# Build aarch64
-#==============================================================================
 .PHONY: build-aarch64
 build-aarch64: $(STAMP_BUILD_ARM)
 
@@ -200,18 +326,27 @@ endif
 	$(Q)cp "$(OUTPUT_ARM)/images/$(ROOTFS)" "$(IMAGES_DIR)/rootfs-aarch64.ext4"
 	@touch $@
 
-#==============================================================================
-# Convenience targets
-#==============================================================================
+# =============================================================================
+# CONVENIENCE ALIASES
+# =============================================================================
+
 .PHONY: configure
 configure: configure-x86_64
 
 .PHONY: build
 build: build-x86_64
 
-#==============================================================================
-# Menuconfig targets (for manual configuration)
-#==============================================================================
+# =============================================================================
+# INTERACTIVE CONFIGURATION
+# =============================================================================
+# menuconfig opens a curses-based UI for editing Buildroot/kernel settings.
+# This is how you add packages, change kernel options, etc.
+#
+# After making changes:
+#   1. Save and exit menuconfig
+#   2. Run "make savedefconfig" to update our defconfig file
+#   3. Commit the updated defconfig
+
 .PHONY: menuconfig
 menuconfig: menuconfig-x86_64
 
@@ -225,6 +360,8 @@ menuconfig-aarch64: $(STAMP_CONFIG_ARM)
 	@echo "$(YELLOW)==> Opening menuconfig for aarch64...$(NC)"
 	$(MAKE) -C "$(BR_DIR)" O="$(OUTPUT_ARM)" menuconfig
 
+# Linux kernel menuconfig - for kernel-specific options like drivers,
+# filesystems, etc.
 .PHONY: linux-menuconfig
 linux-menuconfig: linux-menuconfig-x86_64
 
@@ -238,9 +375,12 @@ linux-menuconfig-aarch64: $(STAMP_CONFIG_ARM)
 	@echo "$(YELLOW)==> Opening Linux kernel menuconfig for aarch64...$(NC)"
 	$(MAKE) -C "$(BR_DIR)" O="$(OUTPUT_ARM)" linux-menuconfig
 
-#==============================================================================
-# Save configuration changes
-#==============================================================================
+# =============================================================================
+# SAVING CONFIGURATION CHANGES
+# =============================================================================
+# After editing with menuconfig, save changes to our defconfig file.
+# Defconfig only stores non-default values, keeping it minimal.
+
 .PHONY: savedefconfig
 savedefconfig: savedefconfig-x86_64
 
@@ -258,9 +398,15 @@ savedefconfig-aarch64: $(STAMP_CONFIG_ARM)
 	$(Q)cp "$(OUTPUT_ARM)/defconfig" "$(CONFIG_DIR)/$(DEFCONFIG_ARM)"
 	@echo "    Saved to $(CONFIG_DIR)/$(DEFCONFIG_ARM)"
 
-#==============================================================================
-# Clean targets
-#==============================================================================
+# =============================================================================
+# CLEANING UP
+# =============================================================================
+# Different levels of cleaning:
+#   clean       - Remove build output, keep downloads
+#   clean-*     - Clean specific architecture
+#   clean-images- Just remove final images
+#   distclean   - Remove EVERYTHING, start from scratch
+
 .PHONY: clean
 clean:
 	@echo "$(YELLOW)==> Cleaning build artifacts...$(NC)"
@@ -296,9 +442,10 @@ distclean:
 	$(Q)rm -f "$(IMAGES_DIR)/rootfs.ext4" "$(IMAGES_DIR)/rootfs-aarch64.ext4"
 	@echo "    Everything cleaned. Run 'make' to start fresh."
 
-#==============================================================================
-# Info/status targets
-#==============================================================================
+# =============================================================================
+# STATUS AND HELP
+# =============================================================================
+
 .PHONY: info
 info:
 	@echo "$(BLUE)PhantomFPGA Buildroot Configuration$(NC)"
@@ -375,22 +522,26 @@ help:
 	@echo ""
 	@echo "$(YELLOW)Note:$(NC) First build takes 30-60 minutes depending on your machine."
 	@echo "      Subsequent builds are incremental and much faster."
+	@echo ""
+	@echo "$(YELLOW)Want to learn more?$(NC) Read this Makefile! It's heavily commented."
 
-#==============================================================================
-# Directory creation
-#==============================================================================
+# =============================================================================
+# DIRECTORY CREATION
+# =============================================================================
+# Order-only prerequisites (after |) - only check existence, not timestamp.
+
 $(DL_DIR) $(OUTPUT_X86) $(OUTPUT_ARM) $(STAMP_DIR) $(IMAGES_DIR):
 	$(Q)mkdir -p $@
 
-#==============================================================================
-# Prevent parallel execution of top-level targets
-# (Buildroot itself handles parallelism internally)
-#==============================================================================
+# =============================================================================
+# PARALLEL BUILD CONTROL
+# =============================================================================
+# .NOTPARALLEL prevents Make from running our top-level targets in parallel.
+# Buildroot handles its own parallelism with -j$(NPROC).
+
 .NOTPARALLEL:
 
-#==============================================================================
-# Mark phony targets
-#==============================================================================
+# Declare all phony targets
 .PHONY: all x86_64 aarch64 all-arches download configure configure-x86_64 \
         configure-aarch64 build build-x86_64 build-aarch64 menuconfig \
         menuconfig-x86_64 menuconfig-aarch64 linux-menuconfig \
