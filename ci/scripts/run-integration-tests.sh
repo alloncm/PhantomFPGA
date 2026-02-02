@@ -300,7 +300,7 @@ run_tests_ssh() {
 
     # Check device presence
     if [ $test_result -eq 0 ]; then
-        $ssh_cmd "lspci -nn | grep -i 1dad:f00d" || {
+        $ssh_cmd "lspci -nn | grep -i 0dad:f00d" || {
             error "PhantomFPGA device not found"
             test_result=1
         }
@@ -358,7 +358,7 @@ modprobe phantomfpga 2>/dev/null || insmod /lib/modules/*/extra/phantomfpga.ko
 sleep 1
 
 # Check device
-if lspci -nn | grep -q "1dad:f00d"; then
+if lspci -nn | grep -q "0dad:f00d"; then
     echo "[PASS] PhantomFPGA PCI device found"
 else
     echo "[FAIL] PhantomFPGA PCI device not found"

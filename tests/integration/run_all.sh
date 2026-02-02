@@ -179,7 +179,7 @@ check_environment() {
 
     # Check PCI device (if lspci available)
     if command -v lspci >/dev/null 2>&1; then
-        if lspci -nn 2>/dev/null | grep -q "1dad:f00d"; then
+        if lspci -nn 2>/dev/null | grep -q "0dad:f00d"; then
             log_info "PCI device: found"
         else
             log_warn "PCI device: not found"

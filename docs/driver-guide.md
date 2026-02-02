@@ -923,7 +923,7 @@ echo 8 > /proc/sys/kernel/printk  # Show all messages
 
 ```bash
 # View PCI device
-lspci -v -s $(lspci | grep 1dad | cut -d' ' -f1)
+lspci -v -s $(lspci | grep 0dad | cut -d' ' -f1)
 
 # View allocated resources
 cat /proc/iomem | grep phantomfpga
