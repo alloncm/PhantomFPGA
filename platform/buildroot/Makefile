@@ -86,10 +86,11 @@
 # We pin a specific version for reproducibility. Upgrading Buildroot can
 # change behavior, so we do it deliberately, not accidentally.
 
-BUILDROOT_VERSION := 2024.02.10
+BUILDROOT_VERSION := 2025.11.1
 BUILDROOT_TARBALL := buildroot-$(BUILDROOT_VERSION).tar.gz
 BUILDROOT_URL := https://buildroot.org/downloads/$(BUILDROOT_TARBALL)
-BUILDROOT_SHA256 := c2bfdd1d81d3a7f4e7c51458e0d7bc13b4f8c9cb13b99b6e20b9dd0b5d7e6a5f
+# Checksum available at https://buildroot.org/downloads/ (not currently verified)
+BUILDROOT_SHA256 := none
 
 # -----------------------------------------------------------------------------
 # DIRECTORY LAYOUT
@@ -240,8 +241,7 @@ $(STAMP_EXTRACT): $(STAMP_DOWNLOAD)
 	@echo "$(BLUE)==> Extracting Buildroot...$(NC)"
 	$(Q)rm -rf "$(BR_DIR)"
 	$(Q)mkdir -p "$(BR_DIR)"
-	$(Q)tar -xzf "$(DL_DIR)/$(BUILDROOT_TARBALL)" -C "$(MAKEFILE_DIR)" --strip-components=1 \
-		--one-top-level=buildroot
+	$(Q)tar -xzf "$(DL_DIR)/$(BUILDROOT_TARBALL)" -C "$(BR_DIR)" --strip-components=1
 	@touch $@
 
 # =============================================================================
@@ -250,10 +250,23 @@ $(STAMP_EXTRACT): $(STAMP_DOWNLOAD)
 # Apply our defconfig to create a full .config. This sets up:
 #   - Target architecture (x86_64 or aarch64)
 #   - Kernel version and config
-#   - Packages to include (busybox, openssh, etc.)
+#   - Packages to include (busybox, dropbear, etc.)
 #   - Rootfs format (ext4)
 #
-# We also append our overlay directory path to the config.
+# TOOLCHAIN SELECTION (automatic):
+#   - x86_64 host: Use Bootlin pre-built toolchain (fast download)
+#   - aarch64 host: Build toolchain from source (slow, ~15 min)
+#
+# Note: Distro cross-compilers (apt install gcc-x86-64-linux-gnu) don't work
+# with Buildroot as they're non-relocatable. On non-x86 hosts, Buildroot
+# must build its own cross-compiler.
+
+# Detect host architecture
+HOST_ARCH := $(shell uname -m)
+
+# Toolchain fragments for Bootlin (x86_64 hosts only)
+TC_BOOTLIN_X86 := $(CONFIG_DIR)/toolchain-bootlin-x86_64.fragment
+TC_BOOTLIN_ARM := $(CONFIG_DIR)/toolchain-bootlin-aarch64.fragment
 
 .PHONY: configure-x86_64
 configure-x86_64: $(STAMP_CONFIG_X86)
@@ -265,8 +278,18 @@ $(STAMP_CONFIG_X86): $(STAMP_EXTRACT) | $(OUTPUT_X86)
 		BR2_EXTERNAL= \
 		BR2_DL_DIR="$(DL_DIR)" \
 		$(if $(filter 0,$(V)),>/dev/null 2>&1,)
-	@# Append overlay path - Buildroot copies these files into the rootfs
+	@# Append overlay path
 	$(Q)echo 'BR2_ROOTFS_OVERLAY="$(OVERLAY_DIR)"' >> "$(OUTPUT_X86)/.config"
+	@# Toolchain selection based on host architecture
+ifeq ($(HOST_ARCH),x86_64)
+	@echo "    $(GREEN)Using Bootlin toolchain (x86_64 host)$(NC)"
+	$(Q)cat "$(TC_BOOTLIN_X86)" >> "$(OUTPUT_X86)/.config"
+	$(Q)$(MAKE) -C "$(BR_DIR)" O="$(OUTPUT_X86)" olddefconfig \
+		$(if $(filter 0,$(V)),>/dev/null 2>&1,)
+else
+	@echo "    $(YELLOW)Building toolchain from source ($(HOST_ARCH) host)$(NC)"
+	@echo "    $(YELLOW)This takes ~15 min. On x86_64 Linux, Bootlin is used instead.$(NC)"
+endif
 	@touch $@
 
 .PHONY: configure-aarch64
@@ -279,7 +302,18 @@ $(STAMP_CONFIG_ARM): $(STAMP_EXTRACT) | $(OUTPUT_ARM)
 		BR2_EXTERNAL= \
 		BR2_DL_DIR="$(DL_DIR)" \
 		$(if $(filter 0,$(V)),>/dev/null 2>&1,)
+	@# Append overlay path
 	$(Q)echo 'BR2_ROOTFS_OVERLAY="$(OVERLAY_DIR)"' >> "$(OUTPUT_ARM)/.config"
+	@# Toolchain selection based on host architecture
+ifeq ($(HOST_ARCH),x86_64)
+	@echo "    $(GREEN)Using Bootlin toolchain (x86_64 host)$(NC)"
+	$(Q)cat "$(TC_BOOTLIN_ARM)" >> "$(OUTPUT_ARM)/.config"
+	$(Q)$(MAKE) -C "$(BR_DIR)" O="$(OUTPUT_ARM)" olddefconfig \
+		$(if $(filter 0,$(V)),>/dev/null 2>&1,)
+else
+	@echo "    $(YELLOW)Building toolchain from source ($(HOST_ARCH) host)$(NC)"
+	@echo "    $(YELLOW)This takes ~15 min. On x86_64 Linux, Bootlin is used instead.$(NC)"
+endif
 	@touch $@
 
 # =============================================================================

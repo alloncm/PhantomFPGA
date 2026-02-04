@@ -1,9 +1,16 @@
 # PhantomFPGA aarch64 Buildroot Configuration
-# This creates a minimal Linux guest for FPGA driver development training
+# Minimal Linux guest for FPGA driver development training
 #
 # Build with:
 #   make O=output/aarch64 phantomfpga_aarch64_defconfig
 #   make O=output/aarch64
+#
+# Cross-compile only - no on-target compilation tools.
+# Driver modules are built on host and deployed via 9p virtfs.
+#
+# TOOLCHAIN: The Makefile automatically selects the best option:
+#   - x86_64 host: Bootlin pre-built (fast)
+#   - Other hosts: Build from source (~15 min, one-time)
 
 #------------------------------------------------------------------------------
 # Target Architecture
@@ -13,13 +20,16 @@ BR2_cortex_a72=y
 BR2_ARM64_PAGE_SIZE_4K=y
 
 #------------------------------------------------------------------------------
-# Toolchain Configuration
+# Toolchain Configuration (base: build from source with glibc)
+# The Makefile may override this with Bootlin or system toolchain
 #------------------------------------------------------------------------------
 BR2_TOOLCHAIN_BUILDROOT_GLIBC=y
-BR2_TOOLCHAIN_BUILDROOT_CXX=y
+BR2_KERNEL_HEADERS_6_6=y
 
-# Keep kernel headers available for module building
-BR2_PACKAGE_HOST_LINUX_HEADERS_CUSTOM_6_6=y
+#------------------------------------------------------------------------------
+# Busybox Configuration
+#------------------------------------------------------------------------------
+BR2_PACKAGE_BUSYBOX_SHOW_OTHERS=y
 
 #------------------------------------------------------------------------------
 # Linux Kernel Configuration
@@ -27,48 +37,13 @@ BR2_PACKAGE_HOST_LINUX_HEADERS_CUSTOM_6_6=y
 BR2_LINUX_KERNEL=y
 BR2_LINUX_KERNEL_CUSTOM_VERSION=y
 BR2_LINUX_KERNEL_CUSTOM_VERSION_VALUE="6.6.70"
-# ARM64's default config is just "defconfig", use arch default
 BR2_LINUX_KERNEL_USE_ARCH_DEFAULT_CONFIG=y
-# aarch64 uses Image (not bzImage)
 BR2_LINUX_KERNEL_IMAGE="Image"
 BR2_LINUX_KERNEL_INSTALL_TARGET=y
-
-# Enable kernel module support in the kernel itself
 BR2_LINUX_KERNEL_NEEDS_HOST_OPENSSL=y
 
 #------------------------------------------------------------------------------
-# Kernel Headers for Module Building
-#------------------------------------------------------------------------------
-BR2_PACKAGE_LINUX_HEADERS=y
-BR2_PACKAGE_LINUX_HEADERS_CUSTOM_REALLY_OLD=y
-BR2_PACKAGE_LINUX_HEADERS_CUSTOM_6_6=y
-
-#------------------------------------------------------------------------------
-# Build System Packages (for in-guest kernel module compilation)
-#------------------------------------------------------------------------------
-BR2_PACKAGE_BUSYBOX_SHOW_OTHERS=y
-BR2_PACKAGE_MAKE=y
-BR2_PACKAGE_BINUTILS=y
-BR2_PACKAGE_BINUTILS_TARGET=y
-BR2_PACKAGE_FLEX=y
-BR2_PACKAGE_BISON=y
-BR2_PACKAGE_PKGCONF=y
-
-# GCC for target (kernel module builds need this)
-BR2_PACKAGE_GCC_TARGET=y
-
-# Needed for kernel module signature (if enabled) and general crypto
-BR2_PACKAGE_OPENSSL=y
-BR2_PACKAGE_OPENSSL_BIN=y
-
-#------------------------------------------------------------------------------
-# Kernel Source for Module Building
-#------------------------------------------------------------------------------
-# The kernel source will be available for building out-of-tree modules
-BR2_LINUX_KERNEL_INSTALL_TARGET=y
-
-#------------------------------------------------------------------------------
-# Essential Utilities
+# Essential Utilities for PCIe/Driver Work
 #------------------------------------------------------------------------------
 BR2_PACKAGE_PCIUTILS=y
 BR2_PACKAGE_USBUTILS=y
@@ -80,39 +55,38 @@ BR2_PACKAGE_KMOD_TOOLS=y
 #------------------------------------------------------------------------------
 # Development & Debugging Tools
 #------------------------------------------------------------------------------
+BR2_PACKAGE_STRACE=y
+BR2_PACKAGE_FILE=y
+BR2_PACKAGE_LESS=y
+# Note: gdbserver provided via overlay (static binary, no C++ needed)
+
+# Editor and terminal multiplexer
 BR2_PACKAGE_VIM=y
 BR2_PACKAGE_TMUX=y
-BR2_PACKAGE_HTOP=y
-BR2_PACKAGE_STRACE=y
-BR2_PACKAGE_GDB=y
-BR2_PACKAGE_FILE=y
+
+# File managers and utilities
+BR2_PACKAGE_MC=y
 BR2_PACKAGE_TREE=y
-BR2_PACKAGE_LESS=y
 
 #------------------------------------------------------------------------------
 # Network Utilities
 #------------------------------------------------------------------------------
-BR2_PACKAGE_OPENSSH=y
+# Dropbear - lightweight SSH server
+BR2_PACKAGE_DROPBEAR=y
 BR2_PACKAGE_IPROUTE2=y
 BR2_PACKAGE_IPUTILS=y
-BR2_PACKAGE_DROPBEAR=n
 
 #------------------------------------------------------------------------------
 # Filesystem Configuration
 #------------------------------------------------------------------------------
 BR2_TARGET_ROOTFS_EXT2=y
 BR2_TARGET_ROOTFS_EXT2_4=y
-BR2_TARGET_ROOTFS_EXT2_SIZE="2G"
+BR2_TARGET_ROOTFS_EXT2_SIZE="256M"
 BR2_TARGET_ROOTFS_EXT2_LABEL="PHANTOMFPGA"
 
-# Also create a cpio for initramfs if needed
+# cpio for initramfs if needed
 BR2_TARGET_ROOTFS_CPIO=y
 BR2_TARGET_ROOTFS_CPIO_GZIP=y
-
-#------------------------------------------------------------------------------
-# Overlay Directory (set during build via sed in Makefile)
-#------------------------------------------------------------------------------
-# BR2_ROOTFS_OVERLAY is configured at build time
 
 #------------------------------------------------------------------------------
 # Init System
@@ -121,45 +95,16 @@ BR2_INIT_BUSYBOX=y
 BR2_ROOTFS_DEVICE_CREATION_DYNAMIC_DEVTMPFS=y
 
 #------------------------------------------------------------------------------
-# Kernel Configuration Fragment for PCIe/DMA Support
-#------------------------------------------------------------------------------
-# These will be merged into the kernel config
-# (defined in linux-aarch64.config)
-#
-# Required kernel options:
-#   CONFIG_PCI=y
-#   CONFIG_PCI_MSI=y
-#   CONFIG_GENERIC_MSI_IRQ=y
-#   CONFIG_DMA_API_DEBUG=y
-#   CONFIG_MODULES=y
-#   CONFIG_MODULE_UNLOAD=y
-#   CONFIG_NET_9P=y
-#   CONFIG_NET_9P_VIRTIO=y
-#   CONFIG_9P_FS=y
-#   CONFIG_9P_FS_POSIX_ACL=y
-#   CONFIG_VIRTIO=y
-#   CONFIG_VIRTIO_PCI=y
-#   CONFIG_VIRTIO_CONSOLE=y
-
-#------------------------------------------------------------------------------
 # Console Configuration (aarch64 typically uses ttyAMA0)
 #------------------------------------------------------------------------------
 BR2_TARGET_GENERIC_GETTY_PORT="ttyAMA0"
 BR2_TARGET_GENERIC_GETTY_BAUDRATE_115200=y
 
 #------------------------------------------------------------------------------
-# Timezone & Locale
+# System Settings
 #------------------------------------------------------------------------------
 BR2_TARGET_LOCALTIME="UTC"
 BR2_GENERATE_LOCALE=""
-
-#------------------------------------------------------------------------------
-# Root Password (set to "root" for SSH access - lab environment only!)
-#------------------------------------------------------------------------------
 BR2_TARGET_GENERIC_ROOT_PASSWD="root"
-
-#------------------------------------------------------------------------------
-# System Hostname
-#------------------------------------------------------------------------------
 BR2_TARGET_GENERIC_HOSTNAME="phantomfpga"
 BR2_TARGET_GENERIC_ISSUE="Welcome to PhantomFPGA Training Environment"

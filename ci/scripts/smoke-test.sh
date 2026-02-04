@@ -87,7 +87,7 @@ check_qemu() {
         return
     fi
 
-    if "$qemu_bin" -device help 2>&1 | grep -q phantomfpga-pcie; then
+    if "$qemu_bin" -device help 2>&1 | grep -q "^name \"phantomfpga\""; then
         pass "QEMU $arch has PhantomFPGA device"
     else
         fail "QEMU $arch missing PhantomFPGA device"

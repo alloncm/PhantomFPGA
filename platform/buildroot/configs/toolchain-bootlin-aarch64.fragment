@@ -1,0 +1,7 @@
+# Bootlin pre-built toolchain for aarch64 target
+# Use on x86_64 Linux hosts (fast download, no build needed)
+# https://toolchains.bootlin.com - aarch64 glibc stable
+#
+BR2_TOOLCHAIN_EXTERNAL=y
+BR2_TOOLCHAIN_EXTERNAL_BOOTLIN=y
+BR2_TOOLCHAIN_EXTERNAL_BOOTLIN_AARCH64_GLIBC_STABLE=y

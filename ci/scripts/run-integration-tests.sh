@@ -193,7 +193,8 @@ start_qemu() {
             if [ "$KVM_ENABLED" = true ]; then
                 qemu_cmd+=(-enable-kvm -cpu host)
             else
-                qemu_cmd+=(-cpu qemu64)
+                # Nehalem required for glibc's SSE4.1 optimizations
+                qemu_cmd+=(-cpu Nehalem)
             fi
             ;;
         aarch64)
@@ -208,7 +209,7 @@ start_qemu() {
     # Common options
     qemu_cmd+=(-m 2G)
     qemu_cmd+=(-smp 2)
-    qemu_cmd+=(-device phantomfpga-pcie)
+    qemu_cmd+=(-device phantomfpga)
     qemu_cmd+=(-nographic)
     qemu_cmd+=(-serial mon:stdio)
 

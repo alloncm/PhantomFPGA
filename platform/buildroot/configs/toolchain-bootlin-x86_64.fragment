@@ -1,0 +1,7 @@
+# Bootlin pre-built toolchain for x86_64 target
+# Use on x86_64 Linux hosts (fast download, no build needed)
+# https://toolchains.bootlin.com - x86-64 glibc stable
+#
+BR2_TOOLCHAIN_EXTERNAL=y
+BR2_TOOLCHAIN_EXTERNAL_BOOTLIN=y
+BR2_TOOLCHAIN_EXTERNAL_BOOTLIN_X86_64_GLIBC_STABLE=y
