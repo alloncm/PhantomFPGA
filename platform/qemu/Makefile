@@ -15,7 +15,7 @@
 # Configuration Variables
 # -----------------------------------------------------------------------------
 
-QEMU_VERSION ?= v8.2.2
+QEMU_VERSION ?= v10.2.0
 QEMU_DIR := $(CURDIR)/qemu
 QEMU_BUILD := $(CURDIR)/build
 

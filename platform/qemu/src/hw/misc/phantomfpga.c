@@ -18,10 +18,11 @@
 #include "hw/pci/msi.h"
 #include "hw/pci/msix.h"
 #include "hw/qdev-properties.h"
+#include "hw/resettable.h"
 #include "migration/vmstate.h"
 #include "qapi/error.h"
 #include "qemu/timer.h"
-#include "sysemu/dma.h"
+#include "system/dma.h"
 
 #include "phantomfpga.h"
 
@@ -939,10 +940,14 @@ static void phantomfpga_do_reset(PhantomFPGAState *s)
     s->fault_counter = 0;
 }
 
-/* PCI reset handler */
-static void phantomfpga_reset(DeviceState *dev)
+/* PCI reset handler - uses modern Resettable interface */
+static void phantomfpga_reset_hold(Object *obj, ResetType type)
 {
-    PhantomFPGAState *s = PHANTOMFPGA(dev);
+    PhantomFPGAState *s = PHANTOMFPGA(obj);
+
+    /* Treat unknown reset types as cold reset per QEMU guidelines */
+    (void)type;
+
     phantomfpga_do_reset(s);
     /* Full reset also clears the mono counter */
     s->mono_counter = 0;
@@ -1071,10 +1076,11 @@ static const VMStateDescription vmstate_phantomfpga = {
 /* Device Class Initialization                                              */
 /* ------------------------------------------------------------------------ */
 
-static void phantomfpga_class_init(ObjectClass *klass, void *data)
+static void phantomfpga_class_init(ObjectClass *klass, const void *data)
 {
     DeviceClass *dc = DEVICE_CLASS(klass);
     PCIDeviceClass *k = PCI_DEVICE_CLASS(klass);
+    ResettableClass *rc = RESETTABLE_CLASS(klass);
 
     k->realize = phantomfpga_realize;
     k->exit = phantomfpga_exit;
@@ -1086,8 +1092,10 @@ static void phantomfpga_class_init(ObjectClass *klass, void *data)
     k->class_id = PCI_CLASS_OTHERS;  /* 0xFF0000 */
 
     dc->desc = "PhantomFPGA SG-DMA Training Device v2.0";
-    dc->reset = phantomfpga_reset;
     dc->vmsd = &vmstate_phantomfpga;
+
+    /* Use modern Resettable interface (QEMU 10.x+) */
+    rc->phases.hold = phantomfpga_reset_hold;
 
     set_bit(DEVICE_CATEGORY_MISC, dc->categories);
 }

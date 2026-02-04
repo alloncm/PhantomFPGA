@@ -20,7 +20,7 @@ on:
       - 'LICENSE'
 
 env:
-  QEMU_VERSION: v8.2.2
+  QEMU_VERSION: v10.2.0
   BUILDROOT_VERSION: "2024.02.10"
 
 jobs:

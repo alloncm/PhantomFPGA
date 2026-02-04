@@ -74,6 +74,8 @@ sudo apt-get install -y \
 ls -la /dev/kvm
 # If this shows the file, great! If not, things will work but slower.
 ```
+> [!NOTE]
+> `/dev/kvm` will probably only exist on a native Linux laptop/computer. If you are on a VM, you can try runnning commands like `systemd-detect-virt`, `lscpu | grep -i hypervisor`, `dmesg | grep -i hypervisor` to check if your system supports transparrent virtualization.
 
 **Disk space needed**: About 15-20 GB. Yeah, I know. QEMU and Buildroot are hungry beasts.
 
@@ -96,7 +98,7 @@ cd ../..
 ```
 
 This will:
-- Download QEMU 8.2.2 source code
+- Download QEMU 10.2.0 source code
 - Copy our device files into the QEMU tree
 - Build QEMU for both x86_64 and aarch64 targets
 

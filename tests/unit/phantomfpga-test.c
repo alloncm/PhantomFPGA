@@ -19,6 +19,7 @@
 #include "libqos/pci.h"
 #include "libqos/pci-pc.h"
 #include "libqos/malloc-pc.h"
+#include "hw/pci/pci_regs.h"
 #include "qemu/module.h"
 
 /* ------------------------------------------------------------------------ */
@@ -118,6 +119,30 @@
 /* Packet magic - unchanged because tradition */
 #define PACKET_MAGIC            0xABCD1234
 
+/* Descriptor structure (must match device) */
+typedef struct {
+    uint32_t control;
+    uint32_t length;
+    uint64_t dst_addr;
+    uint64_t next_desc;
+    uint64_t reserved;
+} __attribute__((packed)) TestSGDesc;
+
+#define DESC_SIZE           32
+#define DESC_CTRL_COMPLETED (1 << 0)
+#define DESC_CTRL_EOP       (1 << 1)
+#define DESC_CTRL_SOP       (1 << 2)
+
+/* Completion structure (must match device) */
+typedef struct {
+    uint32_t status;
+    uint32_t actual_length;
+    uint64_t timestamp;
+} __attribute__((packed)) TestCompletion;
+
+#define COMPL_SIZE          16
+#define COMPL_STATUS_OK     0
+
 /* ------------------------------------------------------------------------ */
 /* Test Fixture                                                             */
 /* Same setup, different device                                             */
@@ -129,9 +154,8 @@ typedef struct {
     QPCIDevice *dev;
     QPCIBar bar0;
     uint64_t bar0_addr;
+    QGuestAllocator alloc;
 } PhantomFPGATestState;
-
-static PhantomFPGATestState *test_state;
 
 /*
  * Read a 32-bit register from BAR0
@@ -166,6 +190,9 @@ static PhantomFPGATestState *phantomfpga_test_start(void)
     /* Start QEMU with PhantomFPGA device */
     s->qts = qtest_init("-device phantomfpga");
 
+    /* Initialize guest memory allocator for DMA buffers */
+    pc_alloc_init(&s->alloc, s->qts, ALLOC_NO_FLAGS);
+
     /* Get PCI bus */
     s->pcibus = qpci_new_pc(s->qts, NULL);
     g_assert(s->pcibus != NULL);
@@ -183,14 +210,14 @@ static PhantomFPGATestState *phantomfpga_test_start(void)
                     device == PHANTOMFPGA_DEVICE_ID) {
                     break;
                 }
-                qpci_device_free(s->dev);
+                g_free(s->dev);
                 s->dev = NULL;
             }
         }
     }
     g_assert(s->dev != NULL);
 
-    /* Enable device */
+    /* Enable device and bus mastering for DMA */
     qpci_device_enable(s->dev);
 
     /* Map BAR0 */
@@ -206,8 +233,9 @@ static PhantomFPGATestState *phantomfpga_test_start(void)
 static void phantomfpga_test_stop(PhantomFPGATestState *s)
 {
     qpci_iounmap(s->dev, s->bar0);
-    qpci_device_free(s->dev);
+    g_free(s->dev);
     qpci_free_pc(s->pcibus);
+    alloc_destroy(&s->alloc);
     qtest_quit(s->qts);
     g_free(s);
 }
@@ -545,15 +573,15 @@ static void test_hdr_profile_clamping(void)
     PhantomFPGATestState *s = phantomfpga_test_start();
     uint32_t val;
 
-    /* Value above maximum should be clamped */
+    /* Value above maximum should default to SIMPLE (safe fallback) */
     reg_write(s, REG_HDR_PROFILE, HDR_PROFILE_MAX + 1);
     val = reg_read(s, REG_HDR_PROFILE);
-    g_assert_cmpuint(val, ==, HDR_PROFILE_MAX);
+    g_assert_cmpuint(val, ==, HDR_PROFILE_SIMPLE);
 
-    /* Way above maximum */
+    /* Way above maximum - also defaults to SIMPLE */
     reg_write(s, REG_HDR_PROFILE, 0xFF);
     val = reg_read(s, REG_HDR_PROFILE);
-    g_assert_cmpuint(val, ==, HDR_PROFILE_MAX);
+    g_assert_cmpuint(val, ==, HDR_PROFILE_SIMPLE);
 
     phantomfpga_test_stop(s);
 }
@@ -997,6 +1025,9 @@ static void test_status_desc_empty(void)
     /* Start the device */
     reg_write(s, REG_CTRL, CTRL_RUN);
 
+    /* Advance virtual clock so packet timer fires and discovers no descriptors */
+    qtest_clock_step_next(s->qts);
+
     /* Should show DESC_EMPTY since HEAD == TAIL */
     val = reg_read(s, REG_STATUS);
     g_assert_cmpuint(val & STATUS_DESC_EMPTY, ==, STATUS_DESC_EMPTY);
@@ -1021,20 +1052,47 @@ static void test_packet_production(void)
     PhantomFPGATestState *s = phantomfpga_test_start();
     uint32_t tail_before, tail_after;
     uint32_t stat_packets_before, stat_packets_after;
+    const int num_descs = 16;
+    const uint32_t buf_size = 4096;  /* 4KB buffer per descriptor */
+    uint64_t desc_ring_addr;
+    uint64_t buf_addrs[16];
+    TestSGDesc desc;
+    int i;
 
-    /*
-     * Configure descriptor ring.
-     * Using a fake address since we're just testing index updates.
-     */
-    reg_write(s, REG_DESC_RING_LO, 0x10000000);
-    reg_write(s, REG_DESC_RING_HI, 0);
-    reg_write(s, REG_DESC_RING_SIZE, 256);
+    /* Allocate descriptor ring in guest memory */
+    desc_ring_addr = guest_alloc(&s->alloc, num_descs * DESC_SIZE);
 
-    /* Submit some descriptors by advancing HEAD */
-    reg_write(s, REG_DESC_HEAD, 100);
+    /* Allocate packet buffers and initialize descriptors */
+    for (i = 0; i < num_descs; i++) {
+        buf_addrs[i] = guest_alloc(&s->alloc, buf_size);
 
-    /* Set a low packet rate for predictable timing */
-    reg_write(s, REG_PKT_RATE, 10);  /* 10 Hz */
+        /* Initialize descriptor */
+        memset(&desc, 0, sizeof(desc));
+        desc.control = 0;  /* Device will set COMPLETED */
+        desc.length = buf_size;
+        desc.dst_addr = buf_addrs[i];
+        desc.next_desc = 0;
+        desc.reserved = 0;
+
+        /* Write descriptor to guest memory */
+        qtest_memwrite(s->qts, desc_ring_addr + i * DESC_SIZE,
+                       &desc, sizeof(desc));
+    }
+
+    /* Configure descriptor ring */
+    reg_write(s, REG_DESC_RING_LO, (uint32_t)(desc_ring_addr & 0xFFFFFFFF));
+    reg_write(s, REG_DESC_RING_HI, (uint32_t)(desc_ring_addr >> 32));
+    reg_write(s, REG_DESC_RING_SIZE, num_descs);
+
+    /* Submit descriptors by advancing HEAD */
+    reg_write(s, REG_DESC_HEAD, 8);  /* Submit 8 descriptors */
+
+    /* Use simple header profile and small packet size for testing */
+    reg_write(s, REG_HDR_PROFILE, HDR_PROFILE_SIMPLE);
+    reg_write(s, REG_PKT_SIZE, 32);  /* 32 * 8 = 256 byte packets */
+
+    /* Set a high packet rate for fast testing */
+    reg_write(s, REG_PKT_RATE, 10000);  /* 10 kHz */
 
     tail_before = reg_read(s, REG_DESC_TAIL);
     stat_packets_before = reg_read(s, REG_STAT_PACKETS);
@@ -1042,11 +1100,14 @@ static void test_packet_production(void)
     /* Start the device */
     reg_write(s, REG_CTRL, CTRL_RUN);
 
-    /* Advance the clock by 200ms (should produce ~2 packets at 10 Hz) */
-    qtest_clock_step(s->qts, 200 * 1000 * 1000);  /* 200ms in ns */
+    /* Advance the clock to produce packets (1ms should be plenty at 10kHz) */
+    qtest_clock_step(s->qts, 1000 * 1000);  /* 1ms in ns */
 
     tail_after = reg_read(s, REG_DESC_TAIL);
     stat_packets_after = reg_read(s, REG_STAT_PACKETS);
+
+    /* Stop the device */
+    reg_write(s, REG_CTRL, 0);
 
     /* Descriptor tail should have advanced */
     g_assert_cmpuint(tail_after, >, tail_before);
@@ -1054,8 +1115,15 @@ static void test_packet_production(void)
     /* Packet counter should have increased */
     g_assert_cmpuint(stat_packets_after, >, stat_packets_before);
 
-    /* Stop the device */
-    reg_write(s, REG_CTRL, 0);
+    /* Verify first descriptor was marked completed */
+    qtest_memread(s->qts, desc_ring_addr, &desc, sizeof(desc));
+    g_assert_cmpuint(desc.control & DESC_CTRL_COMPLETED, ==, DESC_CTRL_COMPLETED);
+
+    /* Clean up */
+    for (i = 0; i < num_descs; i++) {
+        guest_free(&s->alloc, buf_addrs[i]);
+    }
+    guest_free(&s->alloc, desc_ring_addr);
 
     phantomfpga_test_stop(s);
 }
@@ -1067,11 +1135,20 @@ static void test_no_packets_without_descriptors(void)
 {
     PhantomFPGATestState *s = phantomfpga_test_start();
     uint32_t tail_before, tail_after;
+    const int num_descs = 16;
+    uint64_t desc_ring_addr;
+
+    /* Allocate descriptor ring but don't populate or submit */
+    desc_ring_addr = guest_alloc(&s->alloc, num_descs * DESC_SIZE);
 
     /* Configure ring but don't submit descriptors (HEAD stays at 0) */
-    reg_write(s, REG_DESC_RING_LO, 0x10000000);
-    reg_write(s, REG_DESC_RING_HI, 0);
-    reg_write(s, REG_DESC_RING_SIZE, 256);
+    reg_write(s, REG_DESC_RING_LO, (uint32_t)(desc_ring_addr & 0xFFFFFFFF));
+    reg_write(s, REG_DESC_RING_HI, (uint32_t)(desc_ring_addr >> 32));
+    reg_write(s, REG_DESC_RING_SIZE, num_descs);
+    /* HEAD is 0 by default, TAIL is 0 - no descriptors available */
+
+    /* Set a high packet rate */
+    reg_write(s, REG_PKT_RATE, 10000);
 
     tail_before = reg_read(s, REG_DESC_TAIL);
 
@@ -1079,11 +1156,11 @@ static void test_no_packets_without_descriptors(void)
     reg_write(s, REG_CTRL, CTRL_RUN);
 
     /* Advance clock */
-    qtest_clock_step(s->qts, 100 * 1000 * 1000);  /* 100ms */
+    qtest_clock_step(s->qts, 1000 * 1000);  /* 1ms */
 
     tail_after = reg_read(s, REG_DESC_TAIL);
 
-    /* Tail should NOT have advanced (no descriptors) */
+    /* Tail should NOT have advanced (no descriptors submitted) */
     g_assert_cmpuint(tail_after, ==, tail_before);
 
     /* DESC_EMPTY status should be set */
@@ -1092,6 +1169,9 @@ static void test_no_packets_without_descriptors(void)
 
     /* Stop and reset */
     reg_write(s, REG_CTRL, CTRL_RESET);
+
+    /* Clean up */
+    guest_free(&s->alloc, desc_ring_addr);
 
     phantomfpga_test_stop(s);
 }

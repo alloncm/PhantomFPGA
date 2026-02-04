@@ -16,7 +16,7 @@ set -euo pipefail
 # Configuration
 # -----------------------------------------------------------------------------
 
-QEMU_VERSION="v8.2.2"
+QEMU_VERSION="v10.2.0"
 QEMU_REPO="https://gitlab.com/qemu-project/qemu.git"
 
 # Paths (relative to this script's directory)
