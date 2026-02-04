@@ -69,8 +69,9 @@
 # USAGE
 # =============================================================================
 #
-#   make              - Build x86_64 image (default)
-#   make aarch64      - Build aarch64 image
+#   make              - Build image (auto-detects your architecture)
+#   make x86_64       - Build x86_64 image explicitly
+#   make aarch64      - Build aarch64 image explicitly
 #   make all-arches   - Build both architectures
 #   make help         - Show all targets
 #   make menuconfig   - Edit Buildroot config interactively
@@ -193,8 +194,20 @@ endif
 # The main targets you'll use. Each depends on its stamp file, which
 # depends on previous stages.
 
+# Auto-detect target architecture based on host
+# x86_64 host -> x86_64 target, aarch64/arm64 host -> aarch64 target
+ifeq ($(HOST_ARCH),aarch64)
+  DEFAULT_TARGET := aarch64
+else ifeq ($(HOST_ARCH),arm64)
+  DEFAULT_TARGET := aarch64
+else
+  DEFAULT_TARGET := x86_64
+endif
+
 .PHONY: all
-all: x86_64
+all: $(DEFAULT_TARGET)
+	@echo ""
+	@echo "$(GREEN)Tip:$(NC) Run './platform/run_qemu.sh' to boot the VM."
 
 .PHONY: x86_64
 x86_64: $(STAMP_BUILD_X86)
@@ -508,7 +521,7 @@ help:
 	@echo "===================================="
 	@echo ""
 	@echo "$(GREEN)Build Targets:$(NC)"
-	@echo "  make              Build x86_64 image (default)"
+	@echo "  make              Build image for your architecture (auto-detected: $(DEFAULT_TARGET))"
 	@echo "  make x86_64       Build x86_64 image"
 	@echo "  make aarch64      Build aarch64 image"
 	@echo "  make all-arches   Build both architectures"

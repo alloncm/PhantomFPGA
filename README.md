@@ -58,7 +58,21 @@ Let's get you up and running. This will take about 30-60 minutes depending on yo
 
 ### Prerequisites
 
-You need a Linux machine (real or VM) with these packages:
+You need **Linux**. This project won't run directly on macOS or Windows.
+
+| Your computer | What to do |
+|---------------|------------|
+| Linux PC/laptop | You're good to go |
+| Mac (M1/M2/M3) | Install [Lima](https://lima-vm.io/) or [UTM](https://mac.getutm.app/) with ARM64 Linux (e.g., Debian arm64) |
+| Mac (Intel) | Install [Lima](https://lima-vm.io/) or [UTM](https://mac.getutm.app/) with x86_64 Linux |
+| Windows | Use [WSL2](https://learn.microsoft.com/en-us/windows/wsl/install) with Ubuntu |
+
+> [!IMPORTANT]
+> **VM users:** Make sure your VM has at least **8GB RAM** and **4 CPUs**. Default VM settings are usually too low. For Lima: `limactl edit <instance>` and add `cpus: 4` and `memory: "8GiB"`.
+
+**Disk space:** About 15-20 GB.
+
+Once you have Linux running, install these packages:
 
 ```bash
 # Ubuntu/Debian - copy-paste this whole block
@@ -69,15 +83,7 @@ sudo apt-get install -y \
     libglib2.0-dev libpixman-1-dev libslirp-dev \
     libelf-dev libssl-dev flex bison \
     rsync bc cpio unzip wget
-
-# Optional: check if KVM is available (makes things faster)
-ls -la /dev/kvm
-# If this shows the file, great! If not, things will work but slower.
 ```
-> [!NOTE]
-> `/dev/kvm` will probably only exist on a native Linux laptop/computer. If you are on a VM, you can try runnning commands like `systemd-detect-virt`, `lscpu | grep -i hypervisor`, `dmesg | grep -i hypervisor` to check if your system supports transparrent virtualization.
-
-**Disk space needed**: About 15-20 GB. Yeah, I know. QEMU and Buildroot are hungry beasts.
 
 ### Step 1: Clone the Repository
 
@@ -127,14 +133,12 @@ This builds a minimal Linux system that runs inside QEMU.
 
 ```bash
 cd platform/buildroot
-make            # Builds x86_64 image
-make aarch64    # Builds aarch64 image (optional, see note below)
+make
 cd ../..
 ```
 
-**Which one do I need?** Short version: build the one that matches your computer's CPU. If you're on a regular x86 PC or laptop, `make` is all you need. If you're on an ARM64 machine (like a Mac with M1 and later chip running Linux through something like Lima or UTM, or any native ARM64 Linux box/laptop), build the aarch64 image, since it'll run *much* faster as QEMU can use hardware virtualization instead of emulating everything in software. You can also build both and try them, nothing will break.
-
-**Fair warning**: Each image takes a while. Like, 20-40 minutes. Good time for coffee, lunch, or contemplating the meaning of life. Buildroot is downloading and compiling an entire Linux distribution. Make sure your build machine has enough CPUs and RAM available. For instance, Lima VM on a Mac configures only 4GB of RAM for the VM by default, and you'd probably need at least 8GB, if not more. Getting there is quite easy - just run something like `limactl edit debian` or whatever Linux you use, and insert stuff like `cpus: 4` and `memory: "8GiB"`.
+> [!NOTE]
+> This takes 20-40 minutes. The Makefile automatically picks the right architecture for your computer.
 
 **What you should see at the end** (don't move to Step 4 until you see this!):
 ```
@@ -142,10 +146,7 @@ cd ../..
     Kernel: platform/images/bzImage
     Rootfs: platform/images/rootfs.ext4
 
-# For aarch64:
-==> aarch64 build complete!
-    Kernel: platform/images/Image
-    Rootfs: platform/images/rootfs-aarch64.ext4
+Tip: Run './platform/run_qemu.sh' to boot the VM.
 ```
 
 If the command finishes but you don't see this message, something went wrong. Check the troubleshooting section.
@@ -281,23 +282,22 @@ Start here and work your way through:
 2. **[Register Reference](docs/register-reference.md)** - The hardware interface you're programming against
 3. **[Driver Implementation Guide](docs/driver-guide.md)** - Step-by-step instructions for completing the driver
 
-## Running on ARM64
+## Building for a Different Architecture
 
-Want to try aarch64 instead of x86_64? Sure thing:
+The Makefile auto-detects your architecture, but you can explicitly build for a specific one:
 
 ```bash
-# Build the aarch64 guest image (if you haven't already in Step 3)
 cd platform/buildroot
-make aarch64
+make x86_64     # Force x86_64 build
+make aarch64    # Force aarch64 build
+make all-arches # Build both
 cd ../..
 
-# Run the ARM64 VM
+# Run a specific architecture
 ./platform/run_qemu.sh --arch aarch64
 ```
 
 Same device, same driver code, different architecture. That's the beauty of proper abstractions.
-
-**Which is faster?** The QEMU build (Step 2) already produces binaries for both architectures. The trick is: when your VM's architecture matches your host machine, QEMU can use hardware virtualization (KVM) and things run almost at native speed. When they don't match, QEMU has to emulate every instruction in software, which works but is noticeably slower. So if you're on a Mac with an M-series chip, aarch64 is your friend. On a regular PC, stick with x86_64.
 
 ## VM Options
 
