@@ -16,7 +16,7 @@
 # -----------------------------------------------------------------------------
 
 QEMU_VERSION ?= v10.2.0
-QEMU_DIR := $(CURDIR)/qemu
+QEMU_DIR := $(CURDIR)/upstream
 QEMU_BUILD := $(CURDIR)/build
 
 # Target architecture: x86_64 or aarch64 (default: x86_64)

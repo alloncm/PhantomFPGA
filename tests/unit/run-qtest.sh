@@ -19,8 +19,8 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 TOPDIR="$(cd "$SCRIPT_DIR/../.." && pwd)"
 
 # Default paths
-QEMU_BINARY="${QEMU_BINARY:-$TOPDIR/platform/qemu/qemu/build/qemu-system-x86_64}"
-QEMU_SRC="${QEMU_SRC:-$TOPDIR/platform/qemu/qemu}"
+QEMU_BINARY="${QEMU_BINARY:-$TOPDIR/platform/qemu/build/qemu-system-x86_64}"
+QEMU_SRC="${QEMU_SRC:-$TOPDIR/platform/qemu/upstream}"
 
 # Colors for output
 RED='\033[0;31m'
@@ -174,7 +174,7 @@ if [[ -n "$LIST_TESTS" ]]; then
 fi
 
 # Check if we can run actual QTest
-QTEST_BINARY="$TOPDIR/platform/qemu/qemu/build/tests/qtest/phantomfpga-test"
+QTEST_BINARY="$TOPDIR/platform/qemu/build/tests/qtest/phantomfpga-test"
 if [[ -x "$QTEST_BINARY" ]]; then
     echo "Running QTest binary: $QTEST_BINARY"
     echo ""

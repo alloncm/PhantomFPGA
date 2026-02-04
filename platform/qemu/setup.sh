@@ -21,7 +21,7 @@ QEMU_REPO="https://gitlab.com/qemu-project/qemu.git"
 
 # Paths (relative to this script's directory)
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-QEMU_DIR="${SCRIPT_DIR}/qemu"
+QEMU_DIR="${SCRIPT_DIR}/upstream"
 BUILD_DIR="${SCRIPT_DIR}/build"
 PATCHES_DIR="${SCRIPT_DIR}/patches"
 SRC_DIR="${SCRIPT_DIR}/src"

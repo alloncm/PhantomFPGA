@@ -98,7 +98,7 @@ BUILDROOT_SHA256 := c2bfdd1d81d3a7f4e7c51458e0d7bc13b4f8c9cb13b99b6e20b9dd0b5d7e
 #
 #   platform/buildroot/
 #   |-- Makefile          <- You are here
-#   |-- buildroot/        <- Extracted Buildroot source
+#   |-- upstream/         <- Extracted Buildroot source
 #   |-- configs/          <- Our defconfig files
 #   |-- overlay/          <- Files to add to rootfs
 #   |-- dl/               <- Downloaded tarballs (cached)
@@ -109,7 +109,7 @@ BUILDROOT_SHA256 := c2bfdd1d81d3a7f4e7c51458e0d7bc13b4f8c9cb13b99b6e20b9dd0b5d7e
 
 MAKEFILE_DIR := $(shell dirname $(realpath $(lastword $(MAKEFILE_LIST))))
 TOP_DIR := $(realpath $(MAKEFILE_DIR)/../..)
-BR_DIR := $(MAKEFILE_DIR)/buildroot
+BR_DIR := $(MAKEFILE_DIR)/upstream
 OUTPUT_X86 := $(MAKEFILE_DIR)/output/x86_64
 OUTPUT_ARM := $(MAKEFILE_DIR)/output/aarch64
 DL_DIR := $(MAKEFILE_DIR)/dl

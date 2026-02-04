@@ -8,11 +8,11 @@ platform/images/
 
 # QEMU build artifacts
 platform/qemu/build/
-platform/qemu/qemu/
+platform/qemu/upstream/
 platform/qemu/.stamps/
 
 # Buildroot build artifacts
-platform/buildroot/buildroot/
+platform/buildroot/upstream/
 platform/buildroot/output/
 platform/buildroot/dl/
 platform/buildroot/.stamps/

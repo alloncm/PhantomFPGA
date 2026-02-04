@@ -45,7 +45,7 @@ PROJECT_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
 
 TARGET_ARCH="x86_64"          # Also supports "aarch64" for ARM64
 
-QEMU_BUILD="${PROJECT_ROOT}/platform/qemu/qemu/build"
+QEMU_BUILD="${PROJECT_ROOT}/platform/qemu/build"
 DRIVER_DIR="${PROJECT_ROOT}/driver"
 APP_DIR="${PROJECT_ROOT}/app"
 

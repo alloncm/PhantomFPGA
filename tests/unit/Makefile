@@ -24,7 +24,7 @@
 
 # Paths (can be overridden)
 TOPDIR := $(shell cd ../.. && pwd)
-QEMU_SRC ?= $(TOPDIR)/platform/qemu/qemu
+QEMU_SRC ?= $(TOPDIR)/platform/qemu/upstream
 QEMU_BUILD ?= $(TOPDIR)/platform/qemu/build
 QEMU_BINARY ?= $(QEMU_BUILD)/qemu-system-x86_64
 
