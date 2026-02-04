@@ -87,11 +87,11 @@ Sets up QEMU ${QEMU_VERSION} with the PhantomFPGA device.
 Options:
     --clean         Remove QEMU directory and start fresh
     --reconfigure   Re-run configure (useful after option changes)
-    --shallow       Shallow clone (faster, but no git history)
+    --full-history  Clone full git history (slower, usually not needed)
     --help          Show this help message
 
 Examples:
-    ./setup.sh              # Initial setup
+    ./setup.sh              # Initial setup (shallow clone, fast)
     ./setup.sh --clean      # Clean rebuild from scratch
     ./setup.sh --reconfigure # Just reconfigure, keep source
 
@@ -371,7 +371,7 @@ do_clean() {
 main() {
     local clean=false
     local reconfigure=false
-    local shallow=false
+    local shallow=true  # Default to shallow clone (faster)
 
     # Parse arguments
     while [[ $# -gt 0 ]]; do
@@ -384,8 +384,8 @@ main() {
                 reconfigure=true
                 shift
                 ;;
-            --shallow)
-                shallow=true
+            --full-history)
+                shallow=false
                 shift
                 ;;
             --help|-h)
