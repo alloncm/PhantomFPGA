@@ -165,16 +165,12 @@ The moment of truth:
 [*] =======================
 [*] Target: x86_64
 [*] Configuration:
-[*]   Arch:      x86_64
-[*]   Machine:   q35
-[*]   Memory:    2G
-[*]   CPUs:      2
-[*]   KVM:       enabled
-[*]   SSH:       localhost:2222
+[*]   Arch:    x86_64 (q35)
+[*]   Memory:  2G, CPUs: 2
+[*]   SSH:     ssh -p 2222 root@localhost (password: root)
 [*]
 [*] Starting QEMU...
-
-... (a bunch of Linux boot messages) ...
+[*]   To exit the VM: press Ctrl-A then X
 
 Welcome to PhantomFPGA Training Environment!
 phantomfpga login:
@@ -302,8 +298,8 @@ Same device, same driver code, different architecture. That's the beauty of prop
 ## VM Options
 
 ```bash
-# Headless mode (for CI or when you don't need graphics)
-./platform/run_qemu.sh --headless
+# See kernel boot messages (hidden by default)
+./platform/run_qemu.sh --verbose-boot
 
 # Debug mode (starts GDB server on port 1234)
 ./platform/run_qemu.sh --debug
@@ -311,12 +307,11 @@ Same device, same driver code, different architecture. That's the beauty of prop
 # More resources
 ./platform/run_qemu.sh --memory 4G --cpus 4
 
-# Without KVM (slower but works anywhere)
-./platform/run_qemu.sh --no-kvm
-
 # SSH access (from your host machine, password: root)
 ssh -p 2222 root@localhost
 ```
+
+> **To exit the VM**: press `Ctrl-A` then `X`. This is QEMU's escape sequence -- the `Ctrl-A` is like a "hey QEMU, this next key is for you, not the guest".
 
 ## Troubleshooting
 

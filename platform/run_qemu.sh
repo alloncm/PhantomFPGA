@@ -69,9 +69,9 @@ SSH_PORT="2222"
 GDB_PORT="1234"
 
 # Mode flags
-HEADLESS=0      # Set to 1 for CI/automated testing (no display)
 DEBUG_MODE=0    # Set to 1 to enable GDB server
 ENABLE_KVM=1    # KVM makes things MUCH faster when available
+VERBOSE_BOOT=0  # Set to 1 to see kernel boot messages
 EXTRA_ARGS=()   # Additional args passed through to QEMU
 
 # =============================================================================
@@ -90,17 +90,18 @@ Launch the training VM with the PhantomFPGA simulated PCIe device.
 OPTIONS:
   -h, --help              Show this help message and exit
   --arch ARCH             Target architecture (auto-detected: ${TARGET_ARCH})
-  --headless              Run without display (for CI/automated testing)
+  --verbose-boot          Show kernel boot messages (hidden by default)
   --debug                 Enable GDB server on port ${GDB_PORT}
-  --no-kvm                Disable KVM acceleration (slower, but works anywhere)
+  --no-kvm                Disable KVM acceleration
   --memory SIZE           Set VM memory (default: ${MEMORY})
   --cpus COUNT            Set number of CPUs (default: ${CPUS})
   --ssh-port PORT         Set SSH port forwarding (default: ${SSH_PORT})
 
+EXIT: Press Ctrl-A X to quit the VM.
+
 EXAMPLES:
-  $(basename "$0")                     # Normal mode with display
-  $(basename "$0") --arch aarch64      # Run ARM64 VM
-  $(basename "$0") --headless          # Headless for CI (no display)
+  $(basename "$0")                     # Start the VM
+  $(basename "$0") --verbose-boot      # See kernel boot messages
   $(basename "$0") --debug             # With GDB server on port ${GDB_PORT}
   $(basename "$0") --memory 4G --cpus 4  # Beefier VM
   $(basename "$0") -- -monitor stdio   # Pass extra args to QEMU
@@ -281,8 +282,12 @@ parse_args() {
                 show_help
                 exit 0
                 ;;
+            --verbose-boot)
+                VERBOSE_BOOT=1
+                shift
+                ;;
             --headless)
-                HEADLESS=1
+                # Kept for backwards compat (CI scripts), same as default now
                 shift
                 ;;
             --debug)
@@ -423,7 +428,15 @@ build_qemu_cmd() {
     #   console=ttyS0   - Use serial port for console output
     cmd+=(-kernel "${KERNEL_IMAGE}")
     cmd+=(-drive "file=${ROOTFS_IMAGE},format=raw,if=virtio")
-    cmd+=(-append "root=/dev/vda console=${CONSOLE}")
+
+    # Kernel command line: root device + console + boot verbosity
+    local kcmdline="root=/dev/vda console=${CONSOLE}"
+    if [[ "${VERBOSE_BOOT}" -eq 0 ]]; then
+        # Suppress kernel boot messages - trainees don't need to see them.
+        # Use --verbose-boot to get the full output for debugging.
+        kcmdline+=" quiet loglevel=1"
+    fi
+    cmd+=(-append "${kcmdline}")
 
     # -------------------------------------------------------------------------
     # PHANTOMFPGA DEVICE (-device phantomfpga)
@@ -486,21 +499,12 @@ build_qemu_cmd() {
     fi
 
     # -------------------------------------------------------------------------
-    # DISPLAY MODE (-nographic, -serial)
+    # DISPLAY MODE (-nographic)
     # -------------------------------------------------------------------------
-    # -nographic: No graphical window, console I/O goes to terminal
-    #             Exit with Ctrl-A X
-    #
-    # -serial mon:stdio: Connect serial port to terminal, with QEMU monitor
-    #                    accessible via Ctrl-A C
-    #
-    # For headless CI, we want -nographic. For interactive development,
-    # we might want a window for graphical output plus serial on stdio.
-    if [[ "${HEADLESS}" -eq 1 ]]; then
-        cmd+=(-nographic)
-    else
-        cmd+=(-serial mon:stdio)
-    fi
+    # -nographic: No graphical window, console I/O goes to terminal.
+    #   Exit with Ctrl-A X.
+    #   Access QEMU monitor with Ctrl-A C (for advanced debugging).
+    cmd+=(-nographic)
 
     # -------------------------------------------------------------------------
     # DEBUG MODE (-gdb, -S)
@@ -548,17 +552,15 @@ main() {
 
     # Show configuration summary
     info "Configuration:"
-    info "  Arch:      ${TARGET_ARCH}"
-    info "  Machine:   ${MACHINE_TYPE}"
-    info "  Memory:    ${MEMORY}"
-    info "  CPUs:      ${CPUS}"
-    info "  KVM:       $([ "${ENABLE_KVM}" -eq 1 ] && echo "enabled" || echo "disabled")"
-    info "  Headless:  $([ "${HEADLESS}" -eq 1 ] && echo "yes" || echo "no")"
-    info "  Debug:     $([ "${DEBUG_MODE}" -eq 1 ] && echo "yes (port ${GDB_PORT})" || echo "no")"
-    info "  SSH:       ssh -p ${SSH_PORT} root@localhost"
+    info "  Arch:    ${TARGET_ARCH} (${MACHINE_TYPE})"
+    info "  Memory:  ${MEMORY}, CPUs: ${CPUS}"
+    info "  SSH:     ssh -p ${SSH_PORT} root@localhost (password: root)"
+    if [[ "${DEBUG_MODE}" -eq 1 ]]; then
+        info "  GDB:     port ${GDB_PORT} (VM paused, waiting for debugger)"
+    fi
     info ""
     info "Starting QEMU..."
-    info "  (Press Ctrl-A X to exit in headless mode)"
+    info "  To exit the VM: press Ctrl-A then X"
     info ""
 
     # Replace this process with QEMU (exec = no fork)
