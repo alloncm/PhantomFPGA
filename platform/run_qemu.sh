@@ -43,7 +43,12 @@ PROJECT_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
 # These defaults work for most development scenarios. Override them with
 # command-line flags when needed.
 
-TARGET_ARCH="x86_64"          # Also supports "aarch64" for ARM64
+# Auto-detect: match the architecture to the host machine
+HOST_ARCH="$(uname -m)"
+case "${HOST_ARCH}" in
+    aarch64|arm64) TARGET_ARCH="aarch64" ;;
+    *)             TARGET_ARCH="x86_64" ;;
+esac
 
 QEMU_BUILD="${PROJECT_ROOT}/platform/qemu/build"
 DRIVER_DIR="${PROJECT_ROOT}/driver"
@@ -84,7 +89,7 @@ Launch the training VM with the PhantomFPGA simulated PCIe device.
 
 OPTIONS:
   -h, --help              Show this help message and exit
-  --arch ARCH             Target architecture: x86_64 (default) or aarch64
+  --arch ARCH             Target architecture (auto-detected: ${TARGET_ARCH})
   --headless              Run without display (for CI/automated testing)
   --debug                 Enable GDB server on port ${GDB_PORT}
   --no-kvm                Disable KVM acceleration (slower, but works anywhere)
@@ -93,7 +98,7 @@ OPTIONS:
   --ssh-port PORT         Set SSH port forwarding (default: ${SSH_PORT})
 
 EXAMPLES:
-  $(basename "$0")                     # Normal mode with display (x86_64)
+  $(basename "$0")                     # Normal mode with display
   $(basename "$0") --arch aarch64      # Run ARM64 VM
   $(basename "$0") --headless          # Headless for CI (no display)
   $(basename "$0") --debug             # With GDB server on port ${GDB_PORT}
