@@ -194,6 +194,9 @@ endif
 # The main targets you'll use. Each depends on its stamp file, which
 # depends on previous stages.
 
+# Detect host architecture (used for auto-detection and toolchain selection)
+HOST_ARCH := $(shell uname -m)
+
 # Auto-detect target architecture based on host
 # x86_64 host -> x86_64 target, aarch64/arm64 host -> aarch64 target
 ifeq ($(HOST_ARCH),aarch64)
@@ -274,8 +277,7 @@ $(STAMP_EXTRACT): $(STAMP_DOWNLOAD)
 # with Buildroot as they're non-relocatable. On non-x86 hosts, Buildroot
 # must build its own cross-compiler.
 
-# Detect host architecture
-HOST_ARCH := $(shell uname -m)
+# HOST_ARCH is defined earlier (before BUILD TARGETS) for auto-detection
 
 # Toolchain fragments for Bootlin (x86_64 hosts only)
 TC_BOOTLIN_X86 := $(CONFIG_DIR)/toolchain-bootlin-x86_64.fragment
