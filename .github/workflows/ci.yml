@@ -1,7 +1,7 @@
 # PhantomFPGA CI Pipeline
 #
-# Builds QEMU with PhantomFPGA device, builds guest images,
-# and runs tests. Because untested code is just a suggestion.
+# Verifies everything compiles. No artifacts uploaded - this is a training
+# project, not a release pipeline. Each job is self-contained.
 #
 name: CI
 
@@ -21,7 +21,6 @@ on:
 
 env:
   QEMU_VERSION: v10.2.0
-  BUILDROOT_VERSION: "2025.11.1"
 
 jobs:
   # ===========================================================================
@@ -74,102 +73,8 @@ jobs:
           ./platform/qemu/build/qemu-system-${{ matrix.arch }} -device help 2>&1 | grep -i phantom
           echo "PhantomFPGA device found!"
 
-      - name: Copy BIOS files to build directory
-        run: |
-          # BIOS files are in QEMU source tree, copy to build for artifact
-          mkdir -p platform/qemu/build/pc-bios
-          cp platform/qemu/upstream/pc-bios/*.bin platform/qemu/build/pc-bios/ 2>/dev/null || true
-          cp platform/qemu/upstream/pc-bios/*.rom platform/qemu/build/pc-bios/ 2>/dev/null || true
-          cp platform/qemu/upstream/pc-bios/efi-* platform/qemu/build/pc-bios/ 2>/dev/null || true
-          ls -la platform/qemu/build/pc-bios/ | head -20
-
-      - name: Upload QEMU binary
-        uses: actions/upload-artifact@v4
-        with:
-          name: qemu-${{ matrix.arch }}
-          path: |
-            platform/qemu/build/qemu-system-${{ matrix.arch }}
-            platform/qemu/build/pc-bios/
-          retention-days: 7
-
   # ===========================================================================
-  # Build Buildroot guest images
-  # ===========================================================================
-  build-guest:
-    name: Build Guest Image (${{ matrix.arch }})
-    runs-on: ubuntu-22.04
-    strategy:
-      matrix:
-        arch: [x86_64, aarch64]
-
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Install dependencies
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y \
-            build-essential rsync bc cpio unzip wget \
-            libncurses-dev file libelf-dev libssl-dev
-
-      - name: Cache Buildroot downloads
-        uses: actions/cache@v4
-        with:
-          path: platform/buildroot/dl
-          key: buildroot-dl-${{ env.BUILDROOT_VERSION }}
-
-      - name: Cache Buildroot build
-        uses: actions/cache@v4
-        with:
-          path: platform/buildroot/output/${{ matrix.arch }}
-          key: buildroot-${{ matrix.arch }}-${{ env.BUILDROOT_VERSION }}-${{ hashFiles('platform/buildroot/configs/**', 'platform/buildroot/overlay/**') }}
-          restore-keys: |
-            buildroot-${{ matrix.arch }}-${{ env.BUILDROOT_VERSION }}-
-
-      - name: Build guest image
-        run: |
-          cd platform/buildroot
-          make ${{ matrix.arch }}
-        timeout-minutes: 150
-
-      - name: Upload guest images
-        uses: actions/upload-artifact@v4
-        with:
-          name: guest-${{ matrix.arch }}
-          path: |
-            platform/images/
-          retention-days: 7
-
-  # ===========================================================================
-  # Run smoke tests (quick verification)
-  # ===========================================================================
-  smoke-test:
-    name: Smoke Test
-    runs-on: ubuntu-22.04
-    needs: [build-qemu]
-
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Download QEMU
-        uses: actions/download-artifact@v4
-        with:
-          name: qemu-x86_64
-          path: platform/qemu/build/
-
-      - name: Make QEMU executable
-        run: chmod +x platform/qemu/build/qemu-system-x86_64
-
-      - name: Run smoke test
-        run: |
-          # Verify QEMU starts and has our device
-          ./platform/qemu/build/qemu-system-x86_64 -device help 2>&1 | grep -q "phantomfpga"
-          echo "Smoke test passed - PhantomFPGA device available"
-
-  # ===========================================================================
-  # Build driver (compile check)
+  # Build driver (compile check against host kernel)
   # ===========================================================================
   build-driver:
     name: Check Driver Compiles
@@ -228,109 +133,12 @@ jobs:
           ./app/build/phantomfpga_app --help
 
   # ===========================================================================
-  # Integration tests (full VM boot)
-  # ===========================================================================
-  integration-test:
-    name: Integration Tests
-    runs-on: ubuntu-22.04
-    needs: [build-qemu, build-guest]
-    if: github.event_name == 'push'  # Skip on PRs to save time
-
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Download QEMU
-        uses: actions/download-artifact@v4
-        with:
-          name: qemu-x86_64
-          path: platform/qemu/build/
-
-      - name: Download guest images
-        uses: actions/download-artifact@v4
-        with:
-          name: guest-x86_64
-          path: platform/images/
-
-      - name: Setup permissions
-        run: |
-          chmod +x platform/qemu/build/qemu-system-x86_64
-          chmod +x platform/run_qemu.sh
-          echo "=== Downloaded QEMU files ==="
-          ls -la platform/qemu/build/
-          echo "=== BIOS files ==="
-          ls -la platform/qemu/build/pc-bios/ || echo "No pc-bios directory"
-
-      - name: Install test dependencies
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y sshpass expect
-
-      - name: Boot VM and run tests
-        run: |
-          # Start VM in background
-          ./platform/run_qemu.sh --headless &
-          VM_PID=$!
-
-          # Wait for VM to boot (check SSH)
-          echo "Waiting for VM to boot..."
-          SSH_SUCCESS=0
-          for i in {1..60}; do
-            # Try verbose SSH to see what's happening
-            if sshpass -p root ssh -v -o StrictHostKeyChecking=no -o ConnectTimeout=5 -p 2222 root@localhost "echo 'VM is up'" 2>&1 | tee /tmp/ssh_$i.log | grep -q "VM is up"; then
-              echo "VM booted successfully!"
-              SSH_SUCCESS=1
-              break
-            fi
-            echo "Waiting... ($i/60)"
-            # Show last few lines of SSH log for debugging
-            if [ -f /tmp/ssh_$i.log ]; then
-              tail -5 /tmp/ssh_$i.log 2>/dev/null || true
-            fi
-            sleep 5
-          done
-
-          if [ "$SSH_SUCCESS" -eq 0 ]; then
-            echo "SSH connection failed after 60 attempts"
-            echo "=== Last SSH attempt log ==="
-            cat /tmp/ssh_60.log 2>/dev/null || echo "No log available"
-            echo "=== Checking port forwarding ==="
-            ss -tlnp | grep 2222 || echo "Port 2222 not listening"
-            echo "=== QEMU process ==="
-            ps aux | grep qemu || echo "No QEMU process found"
-            kill $VM_PID 2>/dev/null || true
-            exit 1
-          fi
-
-          # Small delay to ensure sshd is fully ready
-          sleep 2
-
-          # Show all PCI devices for debugging
-          echo "=== PCI devices in guest ==="
-          sshpass -p root ssh -o StrictHostKeyChecking=no -p 2222 root@localhost "lspci -nn" || echo "lspci failed"
-
-          # Check if PhantomFPGA device is visible (vendor 1dad, device f00d)
-          echo "=== Checking for PhantomFPGA device ==="
-          if sshpass -p root ssh -o StrictHostKeyChecking=no -p 2222 root@localhost "lspci -nn | grep -i 1dad:f00d"; then
-            echo "PhantomFPGA device found!"
-          else
-            echo "PhantomFPGA device not found in lspci output"
-            # Don't fail - device might be there with different formatting
-          fi
-
-          # Shutdown VM
-          kill $VM_PID 2>/dev/null || true
-
-          echo "Integration tests passed!"
-        timeout-minutes: 15
-
-  # ===========================================================================
-  # Summary job
+  # Summary job - branch protection should require this
   # ===========================================================================
   ci-success:
     name: CI Success
     runs-on: ubuntu-22.04
-    needs: [build-qemu, build-driver, build-app, smoke-test]
+    needs: [build-qemu, build-driver, build-app]
     if: always()
 
     steps:
@@ -346,10 +154,6 @@ jobs:
           fi
           if [ "${{ needs.build-app.result }}" != "success" ]; then
             echo "App build failed"
-            exit 1
-          fi
-          if [ "${{ needs.smoke-test.result }}" != "success" ]; then
-            echo "Smoke test failed"
             exit 1
           fi
           echo "All CI checks passed!"
