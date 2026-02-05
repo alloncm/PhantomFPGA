@@ -188,23 +188,27 @@ lspci -nn | grep -i 0dad
 
 **Expected output (slot may vary):**
 ```
-00:02.0 Unclassified device [00ff]: Device [0dad:f00d] (rev 02)
+00:01.0 Unclassified device [00ff]: Device [0dad:f00d] (rev 02)
 ```
 
 There it is! Device 0dad:f00d. That's our "DAD" serving "FOOD" in hex. I'm not sorry.
 
-**Note:** The PCI slot (00:02.0 in this example) can vary depending on your QEMU version and what other devices are configured. Use whatever slot `lspci` shows you.
+> [!NOTE]
+> The PCI slot (00:01.0 in this example) can vary depending on lots of stuff. Use whatever slot `lspci` shows you.
 
-Let's read the device ID register to make sure it's really our device:
+Let's poke the device registers to make sure it's really ours. Since no driver is loaded yet, the device is disabled by default - we need to enable it first:
 
 ```bash
-# Find the BAR0 address (use YOUR slot from lspci above)
-lspci -v -s 00:02.0 | grep "Memory at"
-# Example output: Memory at febd1000 (32-bit, non-prefetchable) [size=4K]
+# Enable the device (use YOUR slot from lspci above)
+echo 1 > /sys/bus/pci/devices/0000:00:01.0/enable
+
+# Check the BAR0 address - it should no longer say [disabled]
+lspci -v -s 00:01.0 | grep "Memory at"
+# Example output: Memory at 10040000 (32-bit, non-prefetchable) [size=4K]
 
 # Read the device ID register (at offset 0x000)
-# Use the address from the output above
-devmem 0xfebd1000 w
+# Use the address from the output above, with 0x prefix!
+devmem 0x10040000 w
 ```
 
 **Expected output:**
@@ -213,8 +217,6 @@ devmem 0xfebd1000 w
 ```
 
 `0xF00DFACE` - that's the device's way of saying hello. If you see this, your fake FPGA is alive and happy!
-
-**Note:** We use `devmem` (busybox's memory access tool) rather than `devmem2`. Same idea, slightly different output format.
 
 ## Now What? The Fun Part!
 
