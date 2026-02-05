@@ -13,7 +13,7 @@ Your simulated PCIe FPGA device is ready! (PCI ID 0dad:f00d)
 
 QUICK START:
   1. Build the driver on your HOST machine (not here!):
-       cd driver && make KDIR=../platform/buildroot/output/$(uname -m)/build/linux-*
+       cd driver && make
   2. Back here in the VM:
        pf-load                  Load the kernel module
        pf-status                Check it loaded

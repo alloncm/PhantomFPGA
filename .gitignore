@@ -30,10 +30,7 @@ driver/.tmp_versions/
 
 # Application build artifacts
 app/build/
-app/CMakeCache.txt
-app/CMakeFiles/
-app/cmake_install.cmake
-app/Makefile
+app/build/
 app/phantomfpga_app
 
 # Test artifacts

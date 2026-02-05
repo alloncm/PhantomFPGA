@@ -202,7 +202,7 @@ Let's poke the device registers to make sure it's really ours. Since no driver i
 # Enable the device (use YOUR slot from lspci above)
 echo 1 > /sys/bus/pci/devices/0000:00:01.0/enable
 
-# Check the BAR0 address - it should no longer say [disabled]
+# Check the BAR0 address - it shouldn't say [disabled]
 lspci -v -s 00:01.0 | grep "Memory at"
 # Example output: Memory at 10040000 (32-bit, non-prefetchable) [size=4K]
 
@@ -234,13 +234,12 @@ You've got the environment running. Now comes the actual learning:
 
 ### Building the Driver (From Your Host)
 
-The driver needs to be built against the guest kernel, which means cross-compiling from your host machine (not inside the VM, which lacks kernel headers).
+The driver needs to be built against the guest kernel, which means cross-compiling from your host machine (not inside the VM, which lacks kernel headers). The Makefile auto-detects the Buildroot paths:
 
 ```bash
 # From your host machine (not inside the VM):
 cd driver
-make KDIR=../platform/buildroot/output/x86_64/build/linux-6.6.70 \
-     CROSS_COMPILE=../platform/buildroot/output/x86_64/host/bin/x86_64-buildroot-linux-gnu-
+make
 ```
 
 The compiled module (`phantomfpga.ko`) appears in the `driver/` directory, which is shared with the VM via 9p at `/mnt/driver`.
@@ -261,8 +260,7 @@ Same deal - cross-compile from your host:
 ```bash
 # From your host machine:
 cd app
-CC=../platform/buildroot/output/x86_64/host/bin/x86_64-buildroot-linux-gnu-gcc
-$CC -Wall -O2 -I../driver -o phantomfpga_app phantomfpga_app.c -lpthread -lrt
+make
 ```
 
 The binary is shared with the VM at `/mnt/app/phantomfpga_app`.

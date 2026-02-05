@@ -3,20 +3,13 @@
 # PhantomFPGA Out-of-Tree Kernel Module Makefile
 #
 # Usage:
-#   make                    - Build against running kernel
+#   make                    - Build using Buildroot output (auto-detected)
 #   make KDIR=/path/to/src  - Build against specific kernel
 #   make clean              - Clean build artifacts
-#   make install            - Install module (requires root)
 #   make help               - Show this help
 #
-# Cross-compilation:
-#   make ARCH=arm64 CROSS_COMPILE=aarch64-linux-gnu- KDIR=/path/to/kernel
-#
-# Debug build:
-#   make DEBUG=1
-
-# Kernel build directory (default: running kernel)
-KDIR ?= /lib/modules/$(shell uname -r)/build
+# The Makefile auto-detects the Buildroot output directory and cross-compiler
+# based on your host architecture. Just run "make" from the driver/ directory.
 
 # Current directory (where our source is)
 PWD := $(shell pwd)
@@ -27,6 +20,44 @@ MODULE := phantomfpga
 # Enable debug output if requested
 ifdef DEBUG
 ccflags-y += -DDEBUG -g
+endif
+
+# ---------------------------------------------------------------------------
+# Auto-detect Buildroot paths
+# ---------------------------------------------------------------------------
+# If KDIR isn't set, try to find the Buildroot output for the host arch.
+# This lets trainees just run "make" without worrying about paths.
+
+DRIVER_DIR := $(shell dirname $(realpath $(lastword $(MAKEFILE_LIST))))
+PROJECT_ROOT := $(realpath $(DRIVER_DIR)/..)
+BR_OUTPUT := $(PROJECT_ROOT)/platform/buildroot/output
+
+HOST_ARCH := $(shell uname -m)
+ifeq ($(HOST_ARCH),aarch64)
+  TARGET_ARCH := aarch64
+  CROSS_PREFIX := aarch64-buildroot-linux-gnu-
+else ifeq ($(HOST_ARCH),arm64)
+  TARGET_ARCH := aarch64
+  CROSS_PREFIX := aarch64-buildroot-linux-gnu-
+else
+  TARGET_ARCH := x86_64
+  CROSS_PREFIX := x86_64-buildroot-linux-gnu-
+endif
+
+BR_ARCH_OUTPUT := $(BR_OUTPUT)/$(TARGET_ARCH)
+
+# Find KDIR: use Buildroot kernel if available, fall back to running kernel
+ifndef KDIR
+  BR_KDIR := $(wildcard $(BR_ARCH_OUTPUT)/build/linux-[0-9]*)
+  ifneq ($(BR_KDIR),)
+    KDIR := $(BR_KDIR)
+    # Also set CROSS_COMPILE when using Buildroot kernel
+    CROSS_COMPILE ?= $(BR_ARCH_OUTPUT)/host/bin/$(CROSS_PREFIX)
+    ARCH ?= $(if $(filter aarch64,$(TARGET_ARCH)),arm64,x86_64)
+    export ARCH CROSS_COMPILE
+  else
+    KDIR := /lib/modules/$(shell uname -r)/build
+  endif
 endif
 
 # Default target
@@ -93,13 +124,12 @@ help:
 	@echo ""
 	@echo "Variables:"
 	@echo "  KDIR       - Kernel source/build directory"
-	@echo "               Default: /lib/modules/\$$(uname -r)/build"
+	@echo "               Auto-detected: $(KDIR)"
 	@echo "  DEBUG      - Enable debug build (DEBUG=1)"
 	@echo ""
 	@echo "Examples:"
-	@echo "  make                          # Build for running kernel"
+	@echo "  make                          # Build (auto-detects Buildroot)"
 	@echo "  make KDIR=/usr/src/linux-5.15 # Build for specific kernel"
 	@echo "  make DEBUG=1                  # Build with debug symbols"
-	@echo "  sudo make install             # Install to system"
 
 .PHONY: all modules clean install uninstall load unload reload info checkpatch help
