@@ -9,26 +9,28 @@
                     FPGA PCIe Driver Development Training
 ================================================================================
 
-Your simulated PCIe FPGA device is ready!
+Your simulated PCIe FPGA device is ready! (PCI ID 0dad:f00d)
 
 QUICK START:
-  1. Build the driver:    cd /mnt/driver && make
-  2. Load the module:     pf-load
-  3. Check it loaded:     pf-status && pf-dev
-  4. Run test app:        phantomfpga_app
+  1. Build the driver on your HOST machine (not here!):
+       cd driver && make KDIR=../platform/buildroot/output/$(uname -m)/build/linux-*
+  2. Back here in the VM:
+       pf-load                  Load the kernel module
+       pf-status                Check it loaded
+       phantomfpga_app          Run the test app
 
 USEFUL COMMANDS:
   pf-load     Load kernel module      pf-unload   Unload module
-  pf-status   Check if loaded         pf-logs     View kernel logs
-  pf-pci      Show PCIe device        pf-test     Rebuild & reload
-  pf-build    Build driver            pf-clean    Clean build
+  pf-reload   Unload + reload         pf-status   Check if loaded
+  pf-logs     View kernel logs        pf-pci      Show PCIe device
+  pf-dev      List /dev entries
 
 DIRECTORIES:
-  /mnt/driver   Driver source (shared from host)
+  /mnt/driver   Driver source & .ko module (shared from host)
   /mnt/app      Test application (shared from host)
 
-The PhantomFPGA device appears at PCI ID 1234:cafe
 Device registers are documented in phantomfpga_regs.h
+Full guide: docs/driver-guide.md (on your host)
 
 Happy hacking!
 ================================================================================

@@ -48,7 +48,6 @@ alias cdd='cd /mnt/driver'      # Go to driver source
 alias cda='cd /mnt/app'         # Go to app source
 
 # If the kernel module exists, show a reminder
-if [ -f "${PHANTOMFPGA_DRIVER_DIR}/phantom_fpga.ko" ]; then
-    echo "Driver module ready at: ${PHANTOMFPGA_DRIVER_DIR}/phantom_fpga.ko"
-    echo "Use 'pf-load' to load it, or 'pf-test' to rebuild and test"
+if [ -f "${PHANTOMFPGA_DRIVER_DIR}/phantomfpga.ko" ]; then
+    echo "Driver module found. Use 'pf-load' to load it."
 fi
