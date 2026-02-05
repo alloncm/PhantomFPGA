@@ -554,7 +554,8 @@ main() {
     info "Configuration:"
     info "  Arch:    ${TARGET_ARCH} (${MACHINE_TYPE})"
     info "  Memory:  ${MEMORY}, CPUs: ${CPUS}"
-    info "  SSH:     ssh -p ${SSH_PORT} root@localhost (password: root)"
+    info "  Login:   root / root"
+    info "  SSH:     ssh -p ${SSH_PORT} root@localhost"
     if [[ "${DEBUG_MODE}" -eq 1 ]]; then
         info "  GDB:     port ${GDB_PORT} (VM paused, waiting for debugger)"
     fi
