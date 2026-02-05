@@ -78,7 +78,7 @@ Once you have Linux running, install these packages:
 # Ubuntu/Debian - copy-paste this whole block
 sudo apt-get update
 sudo apt-get install -y \
-    git build-essential ninja-build meson pkg-config \
+    git build-essential cmake ninja-build meson pkg-config \
     python3 python3-pip \
     libglib2.0-dev libpixman-1-dev libslirp-dev \
     libelf-dev libssl-dev flex bison \

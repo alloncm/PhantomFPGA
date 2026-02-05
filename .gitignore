@@ -29,8 +29,6 @@ driver/.*.cmd
 driver/.tmp_versions/
 
 # Application build artifacts
-app/build/
-app/build/
 app/phantomfpga_app
 
 # Test artifacts
