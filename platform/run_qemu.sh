@@ -59,8 +59,8 @@ QEMU_BIN=""
 KERNEL_IMAGE=""
 ROOTFS_IMAGE=""
 
-# VM resources - 2G RAM and 2 CPUs is plenty for driver development
-MEMORY="2G"
+# VM resources - keep RAM low since we might be running inside a VM already
+MEMORY="512M"
 CPUS="2"
 
 # Port forwarding - we map host:2222 -> guest:22 for SSH access
@@ -152,7 +152,7 @@ die() {
 }
 
 warn() {
-    echo "[WARN] $*" >&2
+    echo "[*] $*" >&2
 }
 
 # =============================================================================

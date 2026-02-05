@@ -68,7 +68,7 @@ You need **Linux**. This project won't run directly on macOS or Windows.
 | Windows | Use [WSL2](https://learn.microsoft.com/en-us/windows/wsl/install) with Ubuntu |
 
 > [!IMPORTANT]
-> **VM users:** Make sure your VM has at least **8GB RAM** and **4 CPUs**. Default VM settings are usually too low. For Lima: `limactl edit <instance>` and add `cpus: 4` and `memory: "8GiB"`.
+> **VM users:** Give your VM at least **8GB RAM** and **4 CPUs** -- the build compiles a lot of code in parallel. For Lima: `limactl edit <instance>` and add `cpus: 4` and `memory: "8GiB"`.
 
 **Disk space:** About 15-20 GB.
 
@@ -166,7 +166,7 @@ The moment of truth:
 [*] Target: x86_64
 [*] Configuration:
 [*]   Arch:    x86_64 (q35)
-[*]   Memory:  2G, CPUs: 2
+[*]   Memory:  512M, CPUs: 2
 [*]   SSH:     ssh -p 2222 root@localhost (password: root)
 [*]
 [*] Starting QEMU...
