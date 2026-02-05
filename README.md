@@ -232,20 +232,18 @@ You've got the environment running. Now comes the actual learning:
 3. **Test your work**
    - Load driver, run app, watch data flow, feel accomplished
 
-### Building the Driver (From Your Host)
+### Building the Driver
 
-The driver needs to be built against the guest kernel, which means cross-compiling from your host machine (not inside the VM, which lacks kernel headers). The Makefile auto-detects the Buildroot paths:
+Build on your host machine, test inside the VM. The `driver/` and `app/` directories on your host are automatically shared with the VM, so anything you build shows up inside the VM instantly.
 
 ```bash
-# From your host machine (not inside the VM):
+# On your host:
 cd driver
 make
 ```
 
-The compiled module (`phantomfpga.ko`) appears in the `driver/` directory, which is shared with the VM via 9p at `/mnt/driver`.
-
 ```bash
-# Inside the VM (via SSH or console):
+# Inside the VM:
 cd /mnt/driver
 insmod phantomfpga.ko
 dmesg | tail -20
@@ -253,17 +251,13 @@ dmesg | tail -20
 
 You should see messages about the driver loading and finding the device.
 
-### Building the App (From Your Host)
-
-Same deal - cross-compile from your host:
+### Building the App
 
 ```bash
-# From your host machine:
+# On your host:
 cd app
 make
 ```
-
-The binary is shared with the VM at `/mnt/app/phantomfpga_app`.
 
 ```bash
 # Inside the VM:
