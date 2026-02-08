@@ -1,24 +1,27 @@
 // SPDX-License-Identifier: GPL-2.0
 /*
- * PhantomFPGA Userspace Application v2.0 - Scatter-Gather DMA Edition
+ * PhantomFPGA Userspace Application v3.0 - ASCII Animation Edition
  *
  * This application demonstrates how to interact with the PhantomFPGA
  * kernel driver. It configures the device, mmaps the descriptor buffers,
- * and polls for incoming packets with full validation.
+ * and polls for incoming frames with validation.
  *
- * v2.0 brings multiple header profiles, CRC validation, variable packet
- * sizes, and fault injection testing. It's basically what you'd write
- * for a real FPGA data acquisition system... minus the real hardware.
+ * v3.0 streams pre-built ASCII animation frames (fixed 5120 bytes each).
+ * Build a driver, stream frames over TCP, watch a cartoon in your terminal.
+ *
+ * "Because nothing says 'I learned DMA' like ASCII art."
  *
  * YOUR MISSION (should you choose to accept it):
- * Complete all the TODO sections to build a working packet receiver.
+ * Complete all the TODO sections to build a working frame receiver.
  * The driver is your partner - make sure you understand the UAPI header
  * before diving in.
  *
  * Usage:
- *   ./phantomfpga_app --rate 1000 --size 256 --profile standard
+ *   ./phantomfpga_app --rate 25 --tcp-server 5000
  *   ./phantomfpga_app --help
  *   ./phantomfpga_app --stats
+ *
+ * Then from your host: phantomfpga_view localhost:5000
  *
  * Author: PhantomFPGA Training Team
  */
@@ -51,25 +54,25 @@
 /* ------------------------------------------------------------------------ */
 
 #define APP_NAME            "phantomfpga_app"
-#define APP_VERSION         "2.0.0"
+#define APP_VERSION         "3.0.0"
 
 /* Device node - matches driver */
 #define DEVICE_PATH         "/dev/phantomfpga0"
 
-/* Default configuration values (in 64-bit words for sizes) */
-#define DEFAULT_PKT_SIZE        256     /* 2KB in bytes (256 * 8) */
-#define DEFAULT_PKT_SIZE_MAX    512     /* 4KB in bytes (512 * 8) */
-#define DEFAULT_PKT_RATE        1000    /* Hz */
+/* Default configuration values */
+#define DEFAULT_FRAME_RATE      25      /* 25 fps for smooth animation */
 #define DEFAULT_DESC_COUNT      256     /* Must be power of 2 */
-#define DEFAULT_HDR_PROFILE     PHANTOMFPGA_HDR_SIMPLE
-#define DEFAULT_IRQ_COUNT       16
-#define DEFAULT_IRQ_TIMEOUT     1000    /* microseconds */
+#define DEFAULT_IRQ_COUNT       8
+#define DEFAULT_IRQ_TIMEOUT     40000   /* 40ms = 1 frame at 25fps */
 
 /* Statistics update interval in seconds */
 #define STATS_INTERVAL_SEC  1
 
 /* CRC32 polynomial (IEEE 802.3) */
 #define CRC32_POLY          0xEDB88320
+
+/* Frame CRC offset */
+#define FRAME_CRC_OFFSET    (PHANTOMFPGA_FRAME_SIZE - 4)
 
 /* ------------------------------------------------------------------------ */
 /* Application Context                                                      */
@@ -83,26 +86,19 @@ struct app_context {
 
     /* Configuration */
     uint32_t desc_count;
-    uint32_t pkt_size_mode;     /* 0=fixed, 1=variable */
-    uint32_t pkt_size;          /* In 64-bit words */
-    uint32_t pkt_size_max;      /* In 64-bit words */
-    uint32_t header_profile;
-    uint32_t pkt_rate;
+    uint32_t frame_rate;        /* Frames per second (1-60) */
     uint32_t buffer_size;       /* Per-buffer size in bytes */
 
     /* Runtime state */
     uint32_t last_seq;          /* Last seen sequence number */
-    bool seq_initialized;       /* Have we seen the first packet? */
-    uint64_t last_counter;      /* Last monotonic counter (full profile) */
+    bool seq_initialized;       /* Have we seen the first frame? */
 
     /* Statistics */
-    uint64_t packets_received;  /* Total packets we processed */
-    uint64_t packets_valid;     /* Packets that passed validation */
+    uint64_t frames_received;   /* Total frames we processed */
+    uint64_t frames_valid;      /* Frames that passed validation */
     uint64_t seq_errors;        /* Sequence discontinuities */
     uint64_t magic_errors;      /* Invalid magic number */
-    uint64_t hdr_crc_errors;    /* Header CRC failures */
-    uint64_t pay_crc_errors;    /* Payload CRC failures */
-    uint64_t corrupted_flags;   /* Packets with CORRUPTED flag */
+    uint64_t crc_errors;        /* CRC validation failures */
     struct timespec start_time; /* When we started receiving */
 
     /* Flags */
@@ -112,18 +108,11 @@ struct app_context {
     bool running;
 
     /* Network streaming */
-    int udp_sock;               /* UDP socket fd (-1 if disabled) */
-    struct sockaddr_in udp_dest; /* UDP destination address */
-
     int tcp_server_sock;        /* TCP server listen socket (-1 if disabled) */
     int tcp_client_fd;          /* Connected TCP client fd (-1 if none) */
     uint16_t tcp_server_port;   /* TCP server listen port */
 
-    int tcp_connect_sock;       /* TCP client socket (-1 if disabled) */
-    char tcp_connect_host[256]; /* TCP client destination host */
-    uint16_t tcp_connect_port;  /* TCP client destination port */
-
-    uint64_t net_packets_sent;  /* Packets sent over network */
+    uint64_t net_frames_sent;   /* Frames sent over network */
     uint64_t net_bytes_sent;    /* Bytes sent over network */
     uint64_t net_send_errors;   /* Network send errors */
 };
@@ -147,18 +136,16 @@ static int setup_mmap(struct app_context *ctx);
 static int start_streaming(struct app_context *ctx);
 static int stop_streaming(struct app_context *ctx);
 static void main_loop(struct app_context *ctx);
-static int process_packet(struct app_context *ctx, const void *buffer, uint32_t actual_len);
-static bool validate_packet(struct app_context *ctx, const void *packet, uint32_t pkt_size);
+static int process_frame(struct app_context *ctx, const void *buffer, uint32_t actual_len);
+static bool validate_frame(struct app_context *ctx, const void *frame, uint32_t frame_size);
 static void print_statistics(struct app_context *ctx);
 static void cleanup(struct app_context *ctx);
 static void signal_handler(int sig);
 
 /* Network streaming functions */
-static int setup_udp_streaming(struct app_context *ctx, const char *dest);
 static int setup_tcp_server(struct app_context *ctx, uint16_t port);
-static int setup_tcp_client(struct app_context *ctx, const char *host, uint16_t port);
 static void accept_tcp_client(struct app_context *ctx);
-static int stream_packet(struct app_context *ctx, const void *data, size_t len);
+static int stream_frame(struct app_context *ctx, const void *data, size_t len);
 static void cleanup_network(struct app_context *ctx);
 
 /* CRC32 functions */
@@ -188,8 +175,6 @@ static void init_crc32_table(void)
     crc32_table_initialized = true;
 }
 
-/* Unused in skeleton - trainees will call this in validate_packet */
-__attribute__((unused))
 static uint32_t compute_crc32(const void *data, size_t len)
 {
     const uint8_t *p = data;
@@ -207,56 +192,7 @@ static uint32_t compute_crc32(const void *data, size_t len)
 /* ------------------------------------------------------------------------ */
 
 /*
- * Parse HOST:PORT and set up UDP socket for streaming
- */
-static int setup_udp_streaming(struct app_context *ctx, const char *dest)
-{
-    char host[256];
-    char *colon;
-    uint16_t port;
-    struct hostent *he;
-
-    strncpy(host, dest, sizeof(host) - 1);
-    host[sizeof(host) - 1] = '\0';
-
-    colon = strrchr(host, ':');
-    if (!colon) {
-        fprintf(stderr, "Invalid format for --udp, use HOST:PORT\n");
-        return -1;
-    }
-    *colon = '\0';
-    port = (uint16_t)strtoul(colon + 1, NULL, 10);
-    if (port == 0) {
-        fprintf(stderr, "Invalid UDP port: %s\n", colon + 1);
-        return -1;
-    }
-
-    /* Resolve hostname */
-    he = gethostbyname(host);
-    if (!he) {
-        fprintf(stderr, "Cannot resolve host: %s\n", host);
-        return -1;
-    }
-
-    /* Create UDP socket */
-    ctx->udp_sock = socket(AF_INET, SOCK_DGRAM, 0);
-    if (ctx->udp_sock < 0) {
-        perror("socket(UDP)");
-        return -1;
-    }
-
-    /* Set up destination address */
-    memset(&ctx->udp_dest, 0, sizeof(ctx->udp_dest));
-    ctx->udp_dest.sin_family = AF_INET;
-    ctx->udp_dest.sin_port = htons(port);
-    memcpy(&ctx->udp_dest.sin_addr, he->h_addr_list[0], he->h_length);
-
-    printf("[NET] UDP streaming to %s:%u\n", host, port);
-    return 0;
-}
-
-/*
- * Set up TCP server socket for accepting connections
+ * Set up TCP server socket for accepting viewer connections
  */
 static int setup_tcp_server(struct app_context *ctx, uint16_t port)
 {
@@ -300,43 +236,7 @@ static int setup_tcp_server(struct app_context *ctx, uint16_t port)
     fcntl(ctx->tcp_server_sock, F_SETFL, O_NONBLOCK);
 
     printf("[NET] TCP server listening on port %u\n", port);
-    return 0;
-}
-
-/*
- * Connect to a TCP server for streaming
- */
-static int setup_tcp_client(struct app_context *ctx, const char *host, uint16_t port)
-{
-    struct hostent *he;
-    struct sockaddr_in addr;
-
-    he = gethostbyname(host);
-    if (!he) {
-        fprintf(stderr, "Cannot resolve host: %s\n", host);
-        return -1;
-    }
-
-    ctx->tcp_connect_sock = socket(AF_INET, SOCK_STREAM, 0);
-    if (ctx->tcp_connect_sock < 0) {
-        perror("socket(TCP client)");
-        return -1;
-    }
-
-    memset(&addr, 0, sizeof(addr));
-    addr.sin_family = AF_INET;
-    addr.sin_port = htons(port);
-    memcpy(&addr.sin_addr, he->h_addr_list[0], he->h_length);
-
-    printf("[NET] Connecting to %s:%u...\n", host, port);
-    if (connect(ctx->tcp_connect_sock, (struct sockaddr *)&addr, sizeof(addr)) < 0) {
-        perror("connect(TCP client)");
-        close(ctx->tcp_connect_sock);
-        ctx->tcp_connect_sock = -1;
-        return -1;
-    }
-
-    printf("[NET] TCP client connected to %s:%u\n", host, port);
+    printf("[NET] From host: phantomfpga_view localhost:%u\n", port);
     return 0;
 }
 
@@ -364,85 +264,45 @@ static void accept_tcp_client(struct app_context *ctx)
     }
 
     ctx->tcp_client_fd = fd;
-    printf("[NET] TCP client connected from %s:%u\n",
+    printf("[NET] Viewer connected from %s:%u\n",
            inet_ntoa(client_addr.sin_addr), ntohs(client_addr.sin_port));
 }
 
 /*
- * Stream a packet over all enabled network channels
- * Returns number of successful sends
+ * Stream a frame to connected TCP client
+ * Frame format: 4-byte length prefix (network order) + frame data
  */
-static int stream_packet(struct app_context *ctx, const void *data, size_t len)
+static int stream_frame(struct app_context *ctx, const void *data, size_t len)
 {
-    int sent = 0;
     ssize_t ret;
 
-    /* UDP streaming */
-    if (ctx->udp_sock >= 0) {
-        ret = sendto(ctx->udp_sock, data, len, 0,
-                     (struct sockaddr *)&ctx->udp_dest, sizeof(ctx->udp_dest));
-        if (ret < 0) {
-            if (ctx->verbose)
-                perror("sendto(UDP)");
-            ctx->net_send_errors++;
-        } else {
-            ctx->net_packets_sent++;
-            ctx->net_bytes_sent += ret;
-            sent++;
-        }
-    }
-
-    /* TCP server - send to connected client */
+    /* TCP server - send to connected viewer */
     if (ctx->tcp_client_fd >= 0) {
         /* Send length prefix (4 bytes) + data for framing */
-        uint32_t pkt_len = htonl((uint32_t)len);
-        ret = send(ctx->tcp_client_fd, &pkt_len, sizeof(pkt_len), MSG_NOSIGNAL);
+        uint32_t frame_len = htonl((uint32_t)len);
+        ret = send(ctx->tcp_client_fd, &frame_len, sizeof(frame_len), MSG_NOSIGNAL);
         if (ret > 0) {
             ret = send(ctx->tcp_client_fd, data, len, MSG_NOSIGNAL);
         }
         if (ret < 0) {
             if (errno == EPIPE || errno == ECONNRESET) {
-                printf("[NET] TCP client disconnected\n");
+                printf("[NET] Viewer disconnected\n");
                 close(ctx->tcp_client_fd);
                 ctx->tcp_client_fd = -1;
             } else {
                 if (ctx->verbose)
-                    perror("send(TCP server)");
+                    perror("send(TCP)");
                 ctx->net_send_errors++;
             }
+            return 0;
         } else {
-            ctx->net_packets_sent++;
+            ctx->net_frames_sent++;
             ctx->net_bytes_sent += len;
-            sent++;
+            return 1;
         }
     }
 
-    /* TCP client - send to connected server */
-    if (ctx->tcp_connect_sock >= 0) {
-        /* Send length prefix (4 bytes) + data for framing */
-        uint32_t pkt_len = htonl((uint32_t)len);
-        ret = send(ctx->tcp_connect_sock, &pkt_len, sizeof(pkt_len), MSG_NOSIGNAL);
-        if (ret > 0) {
-            ret = send(ctx->tcp_connect_sock, data, len, MSG_NOSIGNAL);
-        }
-        if (ret < 0) {
-            if (errno == EPIPE || errno == ECONNRESET) {
-                printf("[NET] TCP connection lost\n");
-                close(ctx->tcp_connect_sock);
-                ctx->tcp_connect_sock = -1;
-            } else {
-                if (ctx->verbose)
-                    perror("send(TCP client)");
-                ctx->net_send_errors++;
-            }
-        } else {
-            ctx->net_packets_sent++;
-            ctx->net_bytes_sent += len;
-            sent++;
-        }
-    }
-
-    return sent;
+    return 0;
 }
 
 /*
@@ -450,10 +310,6 @@ static int stream_packet(struct app_context *ctx, const void *data, size_t len)
  */
 static void cleanup_network(struct app_context *ctx)
 {
-    if (ctx->udp_sock >= 0) {
-        close(ctx->udp_sock);
-        ctx->udp_sock = -1;
-    }
     if (ctx->tcp_client_fd >= 0) {
         close(ctx->tcp_client_fd);
         ctx->tcp_client_fd = -1;
@@ -461,10 +317,6 @@ static void cleanup_network(struct app_context *ctx)
     if (ctx->tcp_server_sock >= 0) {
         close(ctx->tcp_server_sock);
         ctx->tcp_server_sock = -1;
-    }
-    if (ctx->tcp_connect_sock >= 0) {
-        close(ctx->tcp_connect_sock);
-        ctx->tcp_connect_sock = -1;
     }
 }
 
@@ -483,19 +335,13 @@ int main(int argc, char *argv[])
     /* Initialize context with defaults */
     ctx.fd = -1;
     ctx.desc_count = DEFAULT_DESC_COUNT;
-    ctx.pkt_size_mode = 0;  /* Fixed size */
-    ctx.pkt_size = DEFAULT_PKT_SIZE;
-    ctx.pkt_size_max = DEFAULT_PKT_SIZE_MAX;
-    ctx.header_profile = DEFAULT_HDR_PROFILE;
-    ctx.pkt_rate = DEFAULT_PKT_RATE;
+    ctx.frame_rate = DEFAULT_FRAME_RATE;
     ctx.validate_crc = true;
     ctx.running = true;
 
     /* Initialize network socket fds to disabled */
-    ctx.udp_sock = -1;
     ctx.tcp_server_sock = -1;
     ctx.tcp_client_fd = -1;
-    ctx.tcp_connect_sock = -1;
 
     /* Set up global context for signal handler */
     g_ctx = &ctx;
@@ -516,17 +362,12 @@ int main(int argc, char *argv[])
             return 1;
         }
     }
-    if (ctx.tcp_connect_port > 0) {
-        if (setup_tcp_client(&ctx, ctx.tcp_connect_host, ctx.tcp_connect_port) < 0) {
-            cleanup_network(&ctx);
-            return 1;
-        }
-    }
 
     /* Open the device */
     ret = open_device(&ctx);
     if (ret < 0) {
         fprintf(stderr, "Failed to open device: %s\n", strerror(-ret));
+        cleanup_network(&ctx);
         return 1;
     }
 
@@ -545,7 +386,7 @@ int main(int argc, char *argv[])
         return 1;
     }
 
-    /* Set up mmap for zero-copy packet access */
+    /* Set up mmap for zero-copy frame access */
     ret = setup_mmap(&ctx);
     if (ret < 0) {
         fprintf(stderr, "Failed to mmap buffer pool: %s\n", strerror(-ret));
@@ -561,26 +402,15 @@ int main(int argc, char *argv[])
         return 1;
     }
 
-    printf("PhantomFPGA v2.0 streaming started.\n");
+    printf("PhantomFPGA v3.0 ASCII Animation streaming started.\n");
     printf("  Descriptor count: %u\n", ctx.desc_count);
-    printf("  Packet size:      %u bytes (%u 64-bit words)\n",
-           ctx.pkt_size * 8, ctx.pkt_size);
-    if (ctx.pkt_size_mode) {
-        printf("  Packet size max:  %u bytes (%u 64-bit words)\n",
-               ctx.pkt_size_max * 8, ctx.pkt_size_max);
-    }
-    printf("  Header profile:   %s\n",
-           ctx.header_profile == PHANTOMFPGA_HDR_SIMPLE ? "simple (16B)" :
-           ctx.header_profile == PHANTOMFPGA_HDR_STANDARD ? "standard (32B)" :
-           "full (64B)");
-    printf("  Packet rate:      %u Hz\n", ctx.pkt_rate);
+    printf("  Frame size:       %u bytes (fixed)\n", PHANTOMFPGA_FRAME_SIZE);
+    printf("  Frame rate:       %u fps\n", ctx.frame_rate);
+    printf("  Total frames:     %u (10 sec loop)\n", PHANTOMFPGA_FRAME_COUNT);
     printf("  CRC validation:   %s\n", ctx.validate_crc ? "enabled" : "disabled");
-    if (ctx.udp_sock >= 0)
-        printf("  UDP streaming:    enabled\n");
-    if (ctx.tcp_server_sock >= 0)
-        printf("  TCP server:       port %u (waiting for client)\n", ctx.tcp_server_port);
-    if (ctx.tcp_connect_sock >= 0)
-        printf("  TCP client:       connected to %s:%u\n", ctx.tcp_connect_host, ctx.tcp_connect_port);
+    if (ctx.tcp_server_sock >= 0) {
+        printf("  TCP server:       port %u (waiting for viewer)\n", ctx.tcp_server_port);
+    }
     printf("Press Ctrl+C to stop.\n\n");
 
     /* Record start time for rate calculations */
@@ -610,19 +440,13 @@ static void print_usage(const char *prog_name)
 {
     printf("Usage: %s [OPTIONS]\n", prog_name);
     printf("\n");
-    printf("PhantomFPGA v2.0 userspace application - receives and validates packets\n");
-    printf("from the PhantomFPGA SG-DMA device.\n");
+    printf("PhantomFPGA v3.0 userspace application - receives and streams ASCII\n");
+    printf("animation frames from the PhantomFPGA SG-DMA device.\n");
     printf("\n");
     printf("Options:\n");
-    printf("  -r, --rate RATE       Packet rate in Hz (default: %d)\n", DEFAULT_PKT_RATE);
-    printf("  -s, --size SIZE       Packet size in 64-bit words (default: %d = %d bytes)\n",
-           DEFAULT_PKT_SIZE, DEFAULT_PKT_SIZE * 8);
-    printf("  -m, --size-max SIZE   Max packet size for variable mode (default: %d)\n",
-           DEFAULT_PKT_SIZE_MAX);
-    printf("  -v, --variable        Enable variable packet size mode\n");
+    printf("  -r, --rate RATE       Frame rate 1-60 fps (default: %d)\n", DEFAULT_FRAME_RATE);
     printf("  -n, --desc-count N    Descriptor count, power of 2 (default: %d)\n",
            DEFAULT_DESC_COUNT);
-    printf("  -p, --profile PROF    Header profile: simple, standard, full (default: simple)\n");
     printf("  -c, --no-crc          Disable CRC validation\n");
     printf("  -S, --stats           Print device statistics and exit\n");
     printf("  -V, --verbose         Enable verbose output\n");
@@ -630,31 +454,22 @@ static void print_usage(const char *prog_name)
     printf("  --version             Show version information\n");
     printf("\n");
     printf("Network Streaming:\n");
-    printf("  --udp HOST:PORT       Stream packets via UDP to HOST:PORT\n");
-    printf("  --tcp-server PORT     Listen for TCP connections on PORT\n");
-    printf("  --tcp-client HOST:PORT Connect to TCP server at HOST:PORT\n");
+    printf("  --tcp-server PORT     Listen for viewer connections on PORT\n");
     printf("\n");
-    printf("  QEMU: Host is at 10.0.2.2, ports 5000-5009 forwarded (TCP+UDP).\n");
+    printf("  QEMU: Host is at 10.0.2.2, port 5000 forwarded.\n");
     printf("\n");
-    printf("Header Profiles:\n");
-    printf("  simple   - 16 bytes: magic, sequence, size\n");
-    printf("  standard - 32 bytes: + timestamp, counter, header CRC\n");
-    printf("  full     - 64 bytes: + version, flags, mono_counter, payload CRC, channel\n");
+    printf("Frame Format (5120 bytes each):\n");
+    printf("  0x0000: Header (16 bytes) - magic, sequence, timestamp\n");
+    printf("  0x0010: ASCII art (4995 bytes) - 45 rows x 110 cols\n");
+    printf("  0x1393: Padding (105 bytes)\n");
+    printf("  0x13FC: CRC32 (4 bytes)\n");
     printf("\n");
     printf("Examples:\n");
-    printf("  %s --rate 1000 --size 256 --profile standard\n", prog_name);
-    printf("  %s --rate 10000 --size 64 --variable --size-max 512 --profile full\n", prog_name);
-    printf("  %s --stats\n", prog_name);
-    printf("\n");
-    printf("Network streaming examples (from inside QEMU VM):\n");
-    printf("  # UDP to host: on host run 'nc -u -l 5001', then in VM:\n");
-    printf("  %s --udp 10.0.2.2:5001\n", prog_name);
-    printf("\n");
-    printf("  # TCP server: run app, then from host 'nc localhost 5000'\n");
+    printf("  # Start streaming, wait for viewer on port 5000\n");
     printf("  %s --tcp-server 5000\n", prog_name);
     printf("\n");
-    printf("  # TCP client: on host run 'nc -l 5555', then in VM:\n");
-    printf("  %s --tcp-client 10.0.2.2:5555\n", prog_name);
+    printf("  # From host, view the animation:\n");
+    printf("  phantomfpga_view localhost:5000\n");
     printf("\n");
 }
 
@@ -662,52 +477,34 @@ static int parse_arguments(int argc, char *argv[], struct app_context *ctx)
 {
     static struct option long_options[] = {
         {"rate",       required_argument, 0, 'r'},
-        {"size",       required_argument, 0, 's'},
-        {"size-max",   required_argument, 0, 'm'},
-        {"variable",   no_argument,       0, 'v'},
         {"desc-count", required_argument, 0, 'n'},
-        {"profile",    required_argument, 0, 'p'},
         {"no-crc",     no_argument,       0, 'c'},
         {"stats",      no_argument,       0, 'S'},
         {"verbose",    no_argument,       0, 'V'},
         {"help",       no_argument,       0, 'h'},
         {"version",    no_argument,       0, 0x100},
-        {"udp",        required_argument, 0, 0x101},
         {"tcp-server", required_argument, 0, 0x102},
-        {"tcp-client", required_argument, 0, 0x103},
         {0, 0, 0, 0}
     };
 
     int opt;
     int option_index = 0;
 
-    while ((opt = getopt_long(argc, argv, "r:s:m:vn:p:cSVh",
+    while ((opt = getopt_long(argc, argv, "r:n:cSVh",
                               long_options, &option_index)) != -1) {
         switch (opt) {
         case 'r':
-            ctx->pkt_rate = (uint32_t)strtoul(optarg, NULL, 10);
-            break;
-        case 's':
-            ctx->pkt_size = (uint32_t)strtoul(optarg, NULL, 10);
-            break;
-        case 'm':
-            ctx->pkt_size_max = (uint32_t)strtoul(optarg, NULL, 10);
-            break;
-        case 'v':
-            ctx->pkt_size_mode = 1;
+            ctx->frame_rate = (uint32_t)strtoul(optarg, NULL, 10);
+            if (ctx->frame_rate < 1 || ctx->frame_rate > 60) {
+                fprintf(stderr, "Frame rate must be 1-60 fps\n");
+                return -1;
+            }
             break;
         case 'n':
             ctx->desc_count = (uint32_t)strtoul(optarg, NULL, 10);
-            break;
-        case 'p':
-            if (strcmp(optarg, "simple") == 0)
-                ctx->header_profile = PHANTOMFPGA_HDR_SIMPLE;
-            else if (strcmp(optarg, "standard") == 0)
-                ctx->header_profile = PHANTOMFPGA_HDR_STANDARD;
-            else if (strcmp(optarg, "full") == 0)
-                ctx->header_profile = PHANTOMFPGA_HDR_FULL;
-            else {
-                fprintf(stderr, "Unknown profile: %s (use simple, standard, or full)\n", optarg);
+            if ((ctx->desc_count & (ctx->desc_count - 1)) != 0 ||
+                ctx->desc_count < 4 || ctx->desc_count > 4096) {
+                fprintf(stderr, "Descriptor count must be power of 2, 4-4096\n");
                 return -1;
             }
             break;
@@ -726,10 +523,6 @@ static int parse_arguments(int argc, char *argv[], struct app_context *ctx)
         case 0x100:  /* --version */
             printf("%s version %s\n", APP_NAME, APP_VERSION);
             return 1;
-        case 0x101:  /* --udp HOST:PORT */
-            if (setup_udp_streaming(ctx, optarg) < 0)
-                return -1;
-            break;
         case 0x102:  /* --tcp-server PORT */
             ctx->tcp_server_port = (uint16_t)strtoul(optarg, NULL, 10);
             if (ctx->tcp_server_port == 0) {
@@ -737,37 +530,11 @@ static int parse_arguments(int argc, char *argv[], struct app_context *ctx)
                 return -1;
             }
             break;
-        case 0x103:  /* --tcp-client HOST:PORT */
-            {
-                char *colon = strrchr(optarg, ':');
-                if (!colon) {
-                    fprintf(stderr, "Invalid format for --tcp-client, use HOST:PORT\n");
-                    return -1;
-                }
-                *colon = '\0';
-                strncpy(ctx->tcp_connect_host, optarg, sizeof(ctx->tcp_connect_host) - 1);
-                ctx->tcp_connect_port = (uint16_t)strtoul(colon + 1, NULL, 10);
-                if (ctx->tcp_connect_port == 0) {
-                    fprintf(stderr, "Invalid TCP client port: %s\n", colon + 1);
-                    return -1;
-                }
-            }
-            break;
         default:
             print_usage(argv[0]);
             return -1;
         }
     }
-
-    /*
-     * TODO: Add validation for configuration parameters
-     *
-     * HINTS:
-     * - pkt_size should be >= 8 (64 bytes min) and <= 8192 (64KB)
-     * - desc_count must be a power of 2: (n & (n-1)) == 0
-     * - pkt_rate should be >= 1 and <= 100000
-     * - If variable mode, pkt_size_max >= pkt_size
-     */
 
     return 0;
 }
@@ -807,32 +574,24 @@ static int configure_device(struct app_context *ctx)
      * TODO: Configure the PhantomFPGA device via IOCTL
      *
      * STEPS:
-     * 1. Create a struct phantomfpga_sg_config and fill it
+     * 1. Create a struct phantomfpga_config and fill it
      * 2. Zero out the reserved fields
      * 3. Call ioctl(ctx->fd, PHANTOMFPGA_IOCTL_SET_CFG, &config)
      * 4. Check for errors
      *
      * STRUCTURE (from phantomfpga_uapi.h):
-     *   struct phantomfpga_sg_config {
-     *       __u32 desc_count;
-     *       __u32 pkt_size_mode;
-     *       __u32 pkt_size;
-     *       __u32 pkt_size_max;
-     *       __u32 header_profile;
-     *       __u32 pkt_rate;
-     *       __u16 irq_coalesce_count;
-     *       __u16 irq_coalesce_timeout;
-     *       __u32 reserved[4];
+     *   struct phantomfpga_config {
+     *       __u32 desc_count;           // Descriptor count (power of 2, 4-4096)
+     *       __u32 frame_rate;           // Frames per second (1-60)
+     *       __u16 irq_coalesce_count;   // IRQ after N completions
+     *       __u16 irq_coalesce_timeout; // IRQ timeout in microseconds
+     *       __u32 reserved[4];          // Must be zero
      *   };
      *
      * EXAMPLE:
-     *   struct phantomfpga_sg_config config = {0};
+     *   struct phantomfpga_config config = {0};
      *   config.desc_count = ctx->desc_count;
-     *   config.pkt_size_mode = ctx->pkt_size_mode;
-     *   config.pkt_size = ctx->pkt_size;
-     *   config.pkt_size_max = ctx->pkt_size_max;
-     *   config.header_profile = ctx->header_profile;
-     *   config.pkt_rate = ctx->pkt_rate;
+     *   config.frame_rate = ctx->frame_rate;
      *   config.irq_coalesce_count = DEFAULT_IRQ_COUNT;
      *   config.irq_coalesce_timeout = DEFAULT_IRQ_TIMEOUT;
      *
@@ -876,7 +635,7 @@ static int setup_mmap(struct app_context *ctx)
      *
      * NOTE: Buffer layout is:
      *   buffer_pool + (desc_index * buffer_size) = start of buffer for descriptor
-     *   Each buffer contains: [packet data][completion struct at end]
+     *   Each buffer contains: [frame data][completion struct at end]
      */
 
     /* --- YOUR CODE HERE --- */
@@ -889,13 +648,13 @@ static int setup_mmap(struct app_context *ctx)
 static int start_streaming(struct app_context *ctx)
 {
     /*
-     * TODO: Start packet streaming
+     * TODO: Start frame streaming
      *
      * STEPS:
      * 1. Call ioctl(ctx->fd, PHANTOMFPGA_IOCTL_START)
      * 2. Check for errors
      *
-     * After this call, the device will start producing packets.
+     * After this call, the device will start transmitting frames.
      */
 
     /* --- YOUR CODE HERE --- */
@@ -908,7 +667,7 @@ static int start_streaming(struct app_context *ctx)
 static int stop_streaming(struct app_context *ctx)
 {
     /*
-     * TODO: Stop packet streaming
+     * TODO: Stop frame streaming
      *
      * STEPS:
      * 1. Call ioctl(ctx->fd, PHANTOMFPGA_IOCTL_STOP)
@@ -933,11 +692,12 @@ static void main_loop(struct app_context *ctx)
      *
      * The loop should:
      * 1. Use poll() to wait for completed descriptors (POLLIN on ctx->fd)
-     * 2. When data is available, read packets from completed buffers
-     * 3. Process and validate each packet
-     * 4. Mark packets as consumed via PHANTOMFPGA_IOCTL_CONSUME_PKT
-     * 5. Periodically print statistics
-     * 6. Exit when ctx->running becomes false
+     * 2. When data is available, read frames from completed buffers
+     * 3. Process and validate each frame
+     * 4. Mark frames as consumed via PHANTOMFPGA_IOCTL_CONSUME_FRAME
+     * 5. Stream frames to connected viewer
+     * 6. Periodically print statistics
+     * 7. Exit when ctx->running becomes false
      *
      * POLL SETUP:
      *   struct pollfd pfd = {
@@ -947,30 +707,27 @@ static void main_loop(struct app_context *ctx)
      *
      * PROCESSING LOOP OUTLINE:
      *   while (ctx->running) {
-     *       int ret = poll(&pfd, 1, 1000);  // 1 second timeout
+     *       accept_tcp_client(ctx);  // Check for viewer connections
+     *
+     *       int ret = poll(&pfd, 1, 100);  // 100ms timeout
      *       if (ret < 0) {
      *           if (errno == EINTR) continue;
      *           break;
      *       }
-     *       if (ret == 0) {
-     *           print_statistics(ctx);
-     *           continue;
-     *       }
      *       if (pfd.revents & POLLIN) {
-     *           // Process completed packets
-     *           // Use read() or mmap to access packet data
-     *           // Then ioctl(fd, PHANTOMFPGA_IOCTL_CONSUME_PKT) to advance
+     *           // Process completed frames
+     *           // Use read() to get frame data
+     *           // Call process_frame() to validate and stream
+     *           // Frames are auto-consumed after read()
      *       }
      *   }
      *
-     * READING PACKETS WITH MMAP:
-     * - Get buffer address: buffer_pool + (desc_idx * buffer_size)
-     * - Read completion struct at end: buffer + buffer_size - 16
-     * - Completion tells you actual_length and status
-     * - Packet data is at start of buffer
-     *
-     * BONUS: Use read() instead of mmap for simpler code
-     * The driver can copy packet data to userspace buffer.
+     * READING FRAMES WITH read():
+     *   uint8_t frame_buffer[PHANTOMFPGA_FRAME_SIZE];
+     *   ssize_t n = read(ctx->fd, frame_buffer, sizeof(frame_buffer));
+     *   if (n == PHANTOMFPGA_FRAME_SIZE) {
+     *       process_frame(ctx, frame_buffer, n);
+     *   }
      */
 
     /* --- YOUR CODE HERE --- */
@@ -996,119 +753,102 @@ static void main_loop(struct app_context *ctx)
 }
 
 /* ------------------------------------------------------------------------ */
-/* Packet Processing                                                        */
+/* Frame Processing                                                         */
 /* ------------------------------------------------------------------------ */
 
 /* Unused in skeleton - trainees will call this from main loop */
 __attribute__((unused))
-static int process_packet(struct app_context *ctx, const void *buffer, uint32_t actual_len)
+static int process_frame(struct app_context *ctx, const void *buffer, uint32_t actual_len)
 {
     /*
-     * TODO: Process a single packet from a buffer
+     * TODO: Process a single frame from a buffer
      *
      * STEPS:
-     * 1. Validate the packet using validate_packet()
+     * 1. Validate the frame using validate_frame()
      * 2. Update statistics
-     * 3. If verbose, print packet info
+     * 3. Stream frame to connected viewer
+     * 4. If verbose, print frame info
      *
      * EXAMPLE:
-     *   ctx->packets_received++;
+     *   ctx->frames_received++;
      *
-     *   if (validate_packet(ctx, buffer, actual_len)) {
-     *       ctx->packets_valid++;
+     *   if (validate_frame(ctx, buffer, actual_len)) {
+     *       ctx->frames_valid++;
      *   }
+     *
+     *   // Stream to viewer
+     *   stream_frame(ctx, buffer, actual_len);
      *
      *   if (ctx->verbose) {
-     *       // Print based on header profile
-     *       const struct phantomfpga_hdr_simple *hdr = buffer;
-     *       printf("Packet %u: size=%u\n", hdr->sequence, hdr->size);
+     *       const struct phantomfpga_frame_header *hdr = buffer;
+     *       printf("Frame %u: seq=%u ts=%lu\n",
+     *              ctx->frames_received, hdr->sequence, hdr->timestamp);
      *   }
-     *
-     * 4. Stream packet over network if enabled:
-     *   stream_packet(ctx, buffer, actual_len);
      */
 
     /* --- YOUR CODE HERE --- */
     (void)ctx;
     (void)buffer;
     (void)actual_len;
-    fprintf(stderr, "TODO: Implement process_packet()\n");
+    fprintf(stderr, "TODO: Implement process_frame()\n");
 
-    /* Network streaming - even without full implementation, stream the raw data */
-    stream_packet(ctx, buffer, actual_len);
+    /* Stream frame to viewer even without full implementation */
+    stream_frame(ctx, buffer, actual_len);
 
     return 0;
     /* --- END YOUR CODE --- */
 }
 
-/* Unused in skeleton - trainees will call this from process_packet */
+/* Unused in skeleton - trainees will call this from process_frame */
 __attribute__((unused))
-static bool validate_packet(struct app_context *ctx, const void *packet, uint32_t pkt_size)
+static bool validate_frame(struct app_context *ctx, const void *frame, uint32_t frame_size)
 {
     /*
-     * TODO: Validate packet integrity based on header profile
+     * TODO: Validate frame integrity
      *
-     * COMMON CHECKS (all profiles):
-     * 1. Check magic number is PHANTOMFPGA_PACKET_MAGIC (0xABCD1234)
+     * CHECKS:
+     * 1. Check magic number is PHANTOMFPGA_FRAME_MAGIC (0xF00DFACE)
      * 2. Check sequence continuity
-     *
-     * STANDARD PROFILE CHECKS:
-     * 3. Validate header CRC32 (first 24 bytes)
-     *
-     * FULL PROFILE CHECKS:
-     * 4. Validate header CRC32 (first 40 bytes)
-     * 5. Validate payload CRC32
-     * 6. Check for CORRUPTED flag (fault injection)
+     * 3. Validate CRC32 if enabled
      *
      * MAGIC CHECK:
-     *   const struct phantomfpga_hdr_simple *hdr = packet;
-     *   if (hdr->magic != PHANTOMFPGA_PACKET_MAGIC) {
+     *   const struct phantomfpga_frame_header *hdr = frame;
+     *   uint32_t magic = le32toh(hdr->magic);
+     *   if (magic != PHANTOMFPGA_FRAME_MAGIC) {
      *       ctx->magic_errors++;
      *       return false;
      *   }
      *
      * SEQUENCE CHECK:
+     *   uint32_t seq = le32toh(hdr->sequence);
      *   if (!ctx->seq_initialized) {
-     *       ctx->last_seq = hdr->sequence;
+     *       ctx->last_seq = seq;
      *       ctx->seq_initialized = true;
      *   } else {
-     *       uint32_t expected = ctx->last_seq + 1;
-     *       if (hdr->sequence != expected) {
+     *       uint32_t expected = (ctx->last_seq + 1) % PHANTOMFPGA_FRAME_COUNT;
+     *       if (seq != expected) {
      *           ctx->seq_errors++;
      *       }
-     *       ctx->last_seq = hdr->sequence;
+     *       ctx->last_seq = seq;
      *   }
      *
-     * HEADER CRC CHECK (standard/full profiles):
-     *   if (ctx->header_profile >= PHANTOMFPGA_HDR_STANDARD) {
-     *       const struct phantomfpga_hdr_standard *shdr = packet;
-     *       uint32_t expected_crc = compute_crc32(packet, 24);  // First 24 bytes
-     *       if (shdr->hdr_crc32 != expected_crc) {
-     *           ctx->hdr_crc_errors++;
+     * CRC CHECK:
+     *   if (ctx->validate_crc) {
+     *       uint32_t computed = compute_crc32(frame, FRAME_CRC_OFFSET);
+     *       const uint8_t *p = (const uint8_t *)frame + FRAME_CRC_OFFSET;
+     *       uint32_t stored = p[0] | (p[1] << 8) | (p[2] << 16) | (p[3] << 24);
+     *       if (computed != stored) {
+     *           ctx->crc_errors++;
      *           return false;
-     *       }
-     *   }
-     *
-     * PAYLOAD CRC CHECK (full profile only):
-     *   if (ctx->header_profile == PHANTOMFPGA_HDR_FULL) {
-     *       const struct phantomfpga_hdr_full *fhdr = packet;
-     *       const uint8_t *payload = (const uint8_t *)packet + 64;
-     *       uint32_t expected_crc = compute_crc32(payload, fhdr->payload_size);
-     *       if (fhdr->payload_crc32 != expected_crc) {
-     *           ctx->pay_crc_errors++;
-     *           return false;
-     *       }
-     *       if (fhdr->flags & PHANTOMFPGA_PKT_FLAG_CORRUPTED) {
-     *           ctx->corrupted_flags++;
      *       }
      *   }
      */
 
     /* --- YOUR CODE HERE --- */
     (void)ctx;
-    (void)packet;
-    (void)pkt_size;
-    fprintf(stderr, "TODO: Implement validate_packet()\n");
+    (void)frame;
+    (void)frame_size;
+    fprintf(stderr, "TODO: Implement validate_frame()\n");
     return true;
     /* --- END YOUR CODE --- */
 }
@@ -1125,11 +865,11 @@ static void print_statistics(struct app_context *ctx)
      * STEPS:
      * 1. Get device statistics via PHANTOMFPGA_IOCTL_GET_STATS
      * 2. Calculate runtime duration
-     * 3. Calculate packet rate
+     * 3. Calculate frame rate
      * 4. Print stats
      *
      * GET DEVICE STATS:
-     *   struct phantomfpga_sg_stats stats;
+     *   struct phantomfpga_stats stats;
      *   if (ioctl(ctx->fd, PHANTOMFPGA_IOCTL_GET_STATS, &stats) < 0) {
      *       perror("Failed to get stats");
      *       return;
@@ -1144,37 +884,32 @@ static void print_statistics(struct app_context *ctx)
      * EXAMPLE OUTPUT:
      *   printf("=== Statistics ===\n");
      *   printf("Runtime:           %.2f seconds\n", duration);
-     *   printf("Device produced:   %lu packets\n", stats.packets_produced);
-     *   printf("Device completed:  %u descriptors\n", stats.desc_completed);
-     *   printf("Device errors:     %u\n", stats.errors);
-     *   printf("App received:      %lu packets\n", ctx->packets_received);
-     *   printf("App valid:         %lu packets\n", ctx->packets_valid);
+     *   printf("Device transmitted: %lu frames\n", stats.frames_produced);
+     *   printf("Device dropped:    %lu frames\n", stats.frames_dropped);
+     *   printf("Current frame:     %u / %u\n", stats.current_frame, PHANTOMFPGA_FRAME_COUNT);
+     *   printf("App received:      %lu frames\n", ctx->frames_received);
+     *   printf("App valid:         %lu frames\n", ctx->frames_valid);
      *   printf("Sequence errors:   %lu\n", ctx->seq_errors);
      *   printf("Magic errors:      %lu\n", ctx->magic_errors);
-     *   printf("Header CRC errors: %lu\n", ctx->hdr_crc_errors);
-     *   printf("Payload CRC errors:%lu\n", ctx->pay_crc_errors);
-     *   printf("Corrupted flags:   %lu\n", ctx->corrupted_flags);
+     *   printf("CRC errors:        %lu\n", ctx->crc_errors);
      */
 
     /* --- YOUR CODE HERE --- */
     printf("=== Statistics (TODO: implement me) ===\n");
-    printf("Packets received:    %lu\n", (unsigned long)ctx->packets_received);
-    printf("Packets valid:       %lu\n", (unsigned long)ctx->packets_valid);
+    printf("Frames received:     %lu\n", (unsigned long)ctx->frames_received);
+    printf("Frames valid:        %lu\n", (unsigned long)ctx->frames_valid);
     printf("Sequence errors:     %lu\n", (unsigned long)ctx->seq_errors);
     printf("Magic errors:        %lu\n", (unsigned long)ctx->magic_errors);
-    printf("Header CRC errors:   %lu\n", (unsigned long)ctx->hdr_crc_errors);
-    printf("Payload CRC errors:  %lu\n", (unsigned long)ctx->pay_crc_errors);
+    printf("CRC errors:          %lu\n", (unsigned long)ctx->crc_errors);
 
     /* Network statistics */
-    if (ctx->udp_sock >= 0 || ctx->tcp_server_sock >= 0 || ctx->tcp_connect_sock >= 0) {
+    if (ctx->tcp_server_sock >= 0) {
         printf("--- Network ---\n");
-        printf("Packets sent:        %lu\n", (unsigned long)ctx->net_packets_sent);
+        printf("Frames sent:         %lu\n", (unsigned long)ctx->net_frames_sent);
         printf("Bytes sent:          %lu\n", (unsigned long)ctx->net_bytes_sent);
         printf("Send errors:         %lu\n", (unsigned long)ctx->net_send_errors);
-        if (ctx->tcp_server_sock >= 0) {
-            printf("TCP client:          %s\n",
-                   ctx->tcp_client_fd >= 0 ? "connected" : "waiting");
-        }
+        printf("Viewer:              %s\n",
+               ctx->tcp_client_fd >= 0 ? "connected" : "waiting");
     }
     /* --- END YOUR CODE --- */
 }

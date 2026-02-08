@@ -1,15 +1,13 @@
 /*
- * QTest Unit Tests for PhantomFPGA Device v2.0
+ * QTest Unit Tests for PhantomFPGA Device v3.0 - ASCII Animation Edition
  *
  * Tests the PhantomFPGA virtual FPGA device's register behavior,
- * scatter-gather DMA configuration, packet generation, and CRC logic.
+ * scatter-gather DMA configuration, and frame streaming.
  *
- * Run these tests to verify the device implementation before
- * letting trainees loose on driver development. Because nothing
- * says "professional training environment" like untested hardware.
+ * v3.0 streams pre-built ASCII animation frames. Build a driver,
+ * stream frames over TCP, watch a cartoon play in the terminal.
  *
- * v2.0 brings scatter-gather descriptors, multiple header profiles,
- * and enough configuration options to confuse everyone equally.
+ * "Because nothing says 'I learned DMA' like ASCII art."
  *
  * SPDX-License-Identifier: GPL-2.0-or-later
  */
@@ -24,47 +22,56 @@
 
 /* ------------------------------------------------------------------------ */
 /* Device Constants (mirrored from phantomfpga.h)                           */
-/* The source of truth is the QEMU device, but we need these here too       */
 /* ------------------------------------------------------------------------ */
 
 #define PHANTOMFPGA_VENDOR_ID       0x0DAD
 #define PHANTOMFPGA_DEVICE_ID       0xF00D
 
 #define PHANTOMFPGA_DEV_ID_VAL      0xF00DFACE
-#define PHANTOMFPGA_DEV_VER         0x00020000  /* v2.0.0 - SG-DMA edition */
+#define PHANTOMFPGA_DEV_VER         0x00030000  /* v3.0.0 - ASCII Animation */
 
-/* Register offsets - the new hotness */
+/* Frame constants - fixed, no configuration needed */
+#define FRAME_SIZE                  5120        /* Bytes per frame */
+#define FRAME_COUNT                 250         /* Total frames (10 sec @ 25fps) */
+#define FRAME_MAGIC                 0xF00DFACE
+
+/* Register offsets - simplified for v3.0 */
 #define REG_DEV_ID              0x000
 #define REG_DEV_VER             0x004
 #define REG_CTRL                0x008
 #define REG_STATUS              0x00C
 
-#define REG_PKT_SIZE_MODE       0x010
-#define REG_PKT_SIZE            0x014
-#define REG_PKT_SIZE_MAX        0x018
-#define REG_HDR_PROFILE         0x01C
-#define REG_PKT_RATE            0x020
+/* Frame Configuration */
+#define REG_FRAME_SIZE          0x010   /* R   - Frame size (5120) */
+#define REG_FRAME_COUNT         0x014   /* R   - Total frames (250) */
+#define REG_FRAME_RATE          0x018   /* R/W - Frames per second (1-60) */
+#define REG_CURRENT_FRAME       0x01C   /* R   - Current frame index */
 
-#define REG_DESC_RING_LO        0x024
-#define REG_DESC_RING_HI        0x028
-#define REG_DESC_RING_SIZE      0x02C
-#define REG_DESC_HEAD           0x030
-#define REG_DESC_TAIL           0x034
+/* Descriptor Ring Configuration */
+#define REG_DESC_RING_LO        0x020
+#define REG_DESC_RING_HI        0x024
+#define REG_DESC_RING_SIZE      0x028
+#define REG_DESC_HEAD           0x02C
+#define REG_DESC_TAIL           0x030
 
-#define REG_IRQ_STATUS          0x038
-#define REG_IRQ_MASK            0x03C
-#define REG_IRQ_COALESCE        0x040
+/* Interrupt Configuration */
+#define REG_IRQ_STATUS          0x034
+#define REG_IRQ_MASK            0x038
+#define REG_IRQ_COALESCE        0x03C
 
-#define REG_STAT_PACKETS        0x044
+/* Statistics */
+#define REG_STAT_FRAMES_TX      0x040   /* Frames transmitted */
+#define REG_STAT_FRAMES_DROP    0x044   /* Frames dropped (backpressure) */
 #define REG_STAT_BYTES_LO       0x048
 #define REG_STAT_BYTES_HI       0x04C
-#define REG_STAT_ERRORS         0x050
-#define REG_STAT_DESC_COMPL     0x054
+#define REG_STAT_DESC_COMPL     0x050
+#define REG_STAT_ERRORS         0x054
 
+/* Fault Injection */
 #define REG_FAULT_INJECT        0x058
 #define REG_FAULT_RATE          0x05C
 
-/* Control register bits - same as v1.0, if it ain't broke... */
+/* Control register bits */
 #define CTRL_RUN                (1 << 0)
 #define CTRL_RESET              (1 << 1)
 #define CTRL_IRQ_EN             (1 << 2)
@@ -74,50 +81,30 @@
 #define STATUS_DESC_EMPTY       (1 << 1)
 #define STATUS_ERROR            (1 << 2)
 
-/* IRQ bits - now we've got three flavors of interrupts */
+/* IRQ bits */
 #define IRQ_COMPLETE            (1 << 0)
 #define IRQ_ERROR               (1 << 1)
 #define IRQ_NO_DESC             (1 << 2)
 #define IRQ_ALL_BITS            (IRQ_COMPLETE | IRQ_ERROR | IRQ_NO_DESC)
 
-/* Fault injection bits - more ways to break things */
-#define FAULT_DROP_PACKET       (1 << 0)
-#define FAULT_CORRUPT_HDR_CRC   (1 << 1)
-#define FAULT_CORRUPT_PAY_CRC   (1 << 2)
-#define FAULT_CORRUPT_PAYLOAD   (1 << 3)
-#define FAULT_CORRUPT_SEQ       (1 << 4)
-#define FAULT_DELAY_IRQ         (1 << 5)
-#define FAULT_ALL_BITS          0x3F
+/* Fault injection bits - simplified for frames */
+#define FAULT_DROP_FRAME        (1 << 0)
+#define FAULT_CORRUPT_CRC       (1 << 1)
+#define FAULT_CORRUPT_DATA      (1 << 2)
+#define FAULT_SKIP_SEQUENCE     (1 << 3)
+#define FAULT_ALL_BITS          0x0F
 
-/* Header profile constants */
-#define HDR_PROFILE_SIMPLE      0
-#define HDR_PROFILE_STANDARD    1
-#define HDR_PROFILE_FULL        2
-#define HDR_PROFILE_MAX         2
+/* Default values */
+#define DEFAULT_FRAME_RATE      25      /* 25 fps - smooth animation */
+#define DEFAULT_DESC_RING_SIZE  256
+#define DEFAULT_IRQ_COALESCE    ((40000 << 16) | 8)  /* 8 frames or 40ms */
+#define DEFAULT_FAULT_RATE      1000
 
-/* Header sizes (bytes) */
-#define HDR_SIZE_SIMPLE         16
-#define HDR_SIZE_STANDARD       32
-#define HDR_SIZE_FULL           64
-
-/* Default values - sane choices for the indecisive */
-#define DEFAULT_PKT_SIZE        256     /* 256 * 8 = 2048 bytes */
-#define DEFAULT_PKT_SIZE_MAX    512     /* 512 * 8 = 4096 bytes */
-#define DEFAULT_PKT_RATE        1000    /* 1 kHz - nice round number */
-#define DEFAULT_DESC_RING_SIZE  256     /* Enough for most use cases */
-#define DEFAULT_IRQ_COALESCE    ((1000 << 16) | 16)  /* 16 packets or 1ms */
-#define DEFAULT_FAULT_RATE      1000    /* ~0.1% fault probability */
-
-/* Limits - because infinite is not a valid configuration */
-#define MIN_PKT_SIZE            8       /* 8 * 8 = 64 bytes min */
-#define MAX_PKT_SIZE            8192    /* 8192 * 8 = 64KB max */
-#define MIN_DESC_RING_SIZE      4       /* At least 4 descriptors */
-#define MAX_DESC_RING_SIZE      4096    /* That's a lot of descriptors */
-#define MIN_PKT_RATE            1       /* One packet per second */
-#define MAX_PKT_RATE            100000  /* 100 kHz should be plenty */
-
-/* Packet magic - unchanged because tradition */
-#define PACKET_MAGIC            0xABCD1234
+/* Limits */
+#define MIN_FRAME_RATE          1
+#define MAX_FRAME_RATE          60
+#define MIN_DESC_RING_SIZE      4
+#define MAX_DESC_RING_SIZE      4096
 
 /* Descriptor structure (must match device) */
 typedef struct {
@@ -145,7 +132,6 @@ typedef struct {
 
 /* ------------------------------------------------------------------------ */
 /* Test Fixture                                                             */
-/* Same setup, different device                                             */
 /* ------------------------------------------------------------------------ */
 
 typedef struct {
@@ -157,30 +143,16 @@ typedef struct {
     QGuestAllocator alloc;
 } PhantomFPGATestState;
 
-/*
- * Read a 32-bit register from BAR0
- * The bread and butter of device testing.
- */
 static uint32_t reg_read(PhantomFPGATestState *s, uint32_t offset)
 {
     return qpci_io_readl(s->dev, s->bar0, offset);
 }
 
-/*
- * Write a 32-bit value to BAR0 register
- * What could possibly go wrong?
- */
 static void reg_write(PhantomFPGATestState *s, uint32_t offset, uint32_t val)
 {
     qpci_io_writel(s->dev, s->bar0, offset, val);
 }
 
-/*
- * Set up the test environment: start QEMU, find device, map BAR0
- *
- * This is the ceremony we must perform before each test.
- * If it fails, we blame QEMU. If it works, we take the credit.
- */
 static PhantomFPGATestState *phantomfpga_test_start(void)
 {
     PhantomFPGATestState *s;
@@ -197,10 +169,9 @@ static PhantomFPGATestState *phantomfpga_test_start(void)
     s->pcibus = qpci_new_pc(s->qts, NULL);
     g_assert(s->pcibus != NULL);
 
-    /* Find our device - it could be anywhere */
+    /* Find our device */
     s->dev = qpci_device_find(s->pcibus, QPCI_DEVFN(0x04, 0));
     if (!s->dev) {
-        /* Try different slots - device may be elsewhere */
         for (int slot = 0; slot < 32; slot++) {
             s->dev = qpci_device_find(s->pcibus, QPCI_DEVFN(slot, 0));
             if (s->dev) {
@@ -226,10 +197,6 @@ static PhantomFPGATestState *phantomfpga_test_start(void)
     return s;
 }
 
-/*
- * Tear down the test environment
- * Clean up after ourselves like responsible adults.
- */
 static void phantomfpga_test_stop(PhantomFPGATestState *s)
 {
     qpci_iounmap(s->dev, s->bar0);
@@ -242,14 +209,8 @@ static void phantomfpga_test_stop(PhantomFPGATestState *s)
 
 /* ------------------------------------------------------------------------ */
 /* Identification Register Tests                                            */
-/* The "are you who you say you are?" tests                                 */
 /* ------------------------------------------------------------------------ */
 
-/*
- * Test DEV_ID register returns the magic value 0xF00DFACE
- * This is the first thing any driver should check.
- * If this fails, you've got bigger problems.
- */
 static void test_dev_id(void)
 {
     PhantomFPGATestState *s = phantomfpga_test_start();
@@ -261,10 +222,6 @@ static void test_dev_id(void)
     phantomfpga_test_stop(s);
 }
 
-/*
- * Test DEV_VER register returns v2.0.0
- * Make sure we're testing the right version of the device.
- */
 static void test_dev_ver(void)
 {
     PhantomFPGATestState *s = phantomfpga_test_start();
@@ -276,19 +233,12 @@ static void test_dev_ver(void)
     phantomfpga_test_stop(s);
 }
 
-/*
- * Test that DEV_ID is read-only (writes are ignored)
- * No, you can't change who the device is.
- */
 static void test_dev_id_readonly(void)
 {
     PhantomFPGATestState *s = phantomfpga_test_start();
     uint32_t val;
 
-    /* Try to write garbage */
     reg_write(s, REG_DEV_ID, 0xDEADBEEF);
-
-    /* Should still read the magic value */
     val = reg_read(s, REG_DEV_ID);
     g_assert_cmpuint(val, ==, PHANTOMFPGA_DEV_ID_VAL);
 
@@ -297,32 +247,24 @@ static void test_dev_id_readonly(void)
 
 /* ------------------------------------------------------------------------ */
 /* Control Register Tests                                                   */
-/* The "start, stop, reset" dance                                           */
 /* ------------------------------------------------------------------------ */
 
-/*
- * Test CTRL register write and read back
- */
 static void test_ctrl_write_read(void)
 {
     PhantomFPGATestState *s = phantomfpga_test_start();
     uint32_t val;
 
-    /* Initially should be 0 */
     val = reg_read(s, REG_CTRL);
     g_assert_cmpuint(val, ==, 0);
 
-    /* Write IRQ enable bit */
     reg_write(s, REG_CTRL, CTRL_IRQ_EN);
     val = reg_read(s, REG_CTRL);
     g_assert_cmpuint(val, ==, CTRL_IRQ_EN);
 
-    /* Write RUN bit (device should start) */
     reg_write(s, REG_CTRL, CTRL_RUN | CTRL_IRQ_EN);
     val = reg_read(s, REG_CTRL);
     g_assert_cmpuint(val, ==, CTRL_RUN | CTRL_IRQ_EN);
 
-    /* Clear RUN bit */
     reg_write(s, REG_CTRL, CTRL_IRQ_EN);
     val = reg_read(s, REG_CTRL);
     g_assert_cmpuint(val, ==, CTRL_IRQ_EN);
@@ -330,18 +272,13 @@ static void test_ctrl_write_read(void)
     phantomfpga_test_stop(s);
 }
 
-/*
- * Test that RESET bit is self-clearing and resets the device
- * The nuclear option for when things go sideways.
- */
 static void test_ctrl_reset(void)
 {
     PhantomFPGATestState *s = phantomfpga_test_start();
     uint32_t val;
 
-    /* Configure some non-default values */
-    reg_write(s, REG_PKT_SIZE, 512);
-    reg_write(s, REG_PKT_RATE, 500);
+    /* Configure non-default values */
+    reg_write(s, REG_FRAME_RATE, 30);
     reg_write(s, REG_CTRL, CTRL_IRQ_EN);
 
     /* Trigger reset */
@@ -352,270 +289,150 @@ static void test_ctrl_reset(void)
     g_assert_cmpuint(val, ==, 0);
 
     /* Configuration should be back to defaults */
-    val = reg_read(s, REG_PKT_SIZE);
-    g_assert_cmpuint(val, ==, DEFAULT_PKT_SIZE);
-
-    val = reg_read(s, REG_PKT_RATE);
-    g_assert_cmpuint(val, ==, DEFAULT_PKT_RATE);
+    val = reg_read(s, REG_FRAME_RATE);
+    g_assert_cmpuint(val, ==, DEFAULT_FRAME_RATE);
 
     phantomfpga_test_stop(s);
 }
 
 /* ------------------------------------------------------------------------ */
-/* Packet Size Configuration Tests                                          */
-/* Because size matters (in bytes, that is)                                 */
+/* Frame Configuration Tests                                                */
+/* Fixed frame size and count - simplified from v2.0                        */
 /* ------------------------------------------------------------------------ */
 
 /*
- * Test PKT_SIZE register write/read with valid values
- * Sizes are in 64-bit words because that's how FPGAs think.
+ * Test FRAME_SIZE register is fixed at 5120 and read-only
  */
-static void test_pkt_size(void)
+static void test_frame_size(void)
+{
+    PhantomFPGATestState *s = phantomfpga_test_start();
+    uint32_t val;
+
+    /* Should always be FRAME_SIZE */
+    val = reg_read(s, REG_FRAME_SIZE);
+    g_assert_cmpuint(val, ==, FRAME_SIZE);
+
+    /* Try to write (should be ignored - read only) */
+    reg_write(s, REG_FRAME_SIZE, 9999);
+    val = reg_read(s, REG_FRAME_SIZE);
+    g_assert_cmpuint(val, ==, FRAME_SIZE);
+
+    phantomfpga_test_stop(s);
+}
+
+/*
+ * Test FRAME_COUNT register is fixed at 250 and read-only
+ */
+static void test_frame_count(void)
+{
+    PhantomFPGATestState *s = phantomfpga_test_start();
+    uint32_t val;
+
+    /* Should always be FRAME_COUNT */
+    val = reg_read(s, REG_FRAME_COUNT);
+    g_assert_cmpuint(val, ==, FRAME_COUNT);
+
+    /* Try to write (should be ignored - read only) */
+    reg_write(s, REG_FRAME_COUNT, 9999);
+    val = reg_read(s, REG_FRAME_COUNT);
+    g_assert_cmpuint(val, ==, FRAME_COUNT);
+
+    phantomfpga_test_stop(s);
+}
+
+/*
+ * Test FRAME_RATE register write/read
+ */
+static void test_frame_rate(void)
 {
     PhantomFPGATestState *s = phantomfpga_test_start();
     uint32_t val;
 
     /* Default value */
-    val = reg_read(s, REG_PKT_SIZE);
-    g_assert_cmpuint(val, ==, DEFAULT_PKT_SIZE);
+    val = reg_read(s, REG_FRAME_RATE);
+    g_assert_cmpuint(val, ==, DEFAULT_FRAME_RATE);
 
     /* Set valid value */
-    reg_write(s, REG_PKT_SIZE, 128);
-    val = reg_read(s, REG_PKT_SIZE);
-    g_assert_cmpuint(val, ==, 128);
-
-    /* Set minimum valid value */
-    reg_write(s, REG_PKT_SIZE, MIN_PKT_SIZE);
-    val = reg_read(s, REG_PKT_SIZE);
-    g_assert_cmpuint(val, ==, MIN_PKT_SIZE);
-
-    /* Set maximum valid value */
-    reg_write(s, REG_PKT_SIZE, MAX_PKT_SIZE);
-    val = reg_read(s, REG_PKT_SIZE);
-    g_assert_cmpuint(val, ==, MAX_PKT_SIZE);
-
-    phantomfpga_test_stop(s);
-}
-
-/*
- * Test PKT_SIZE clamping for out-of-range values
- * The device is smarter than your configuration mistakes.
- */
-static void test_pkt_size_clamping(void)
-{
-    PhantomFPGATestState *s = phantomfpga_test_start();
-    uint32_t val;
-
-    /* Value below minimum should be clamped */
-    reg_write(s, REG_PKT_SIZE, 1);
-    val = reg_read(s, REG_PKT_SIZE);
-    g_assert_cmpuint(val, ==, MIN_PKT_SIZE);
-
-    /* Value above maximum should be clamped */
-    reg_write(s, REG_PKT_SIZE, MAX_PKT_SIZE + 1000);
-    val = reg_read(s, REG_PKT_SIZE);
-    g_assert_cmpuint(val, ==, MAX_PKT_SIZE);
-
-    phantomfpga_test_stop(s);
-}
-
-/*
- * Test PKT_SIZE_MODE register (fixed vs variable)
- */
-static void test_pkt_size_mode(void)
-{
-    PhantomFPGATestState *s = phantomfpga_test_start();
-    uint32_t val;
-
-    /* Default is fixed mode (0) */
-    val = reg_read(s, REG_PKT_SIZE_MODE);
-    g_assert_cmpuint(val, ==, 0);
-
-    /* Set variable mode */
-    reg_write(s, REG_PKT_SIZE_MODE, 1);
-    val = reg_read(s, REG_PKT_SIZE_MODE);
-    g_assert_cmpuint(val, ==, 1);
-
-    /* Any non-zero value should be treated as 1 */
-    reg_write(s, REG_PKT_SIZE_MODE, 0xFF);
-    val = reg_read(s, REG_PKT_SIZE_MODE);
-    g_assert_cmpuint(val, ==, 1);
-
-    /* Back to fixed */
-    reg_write(s, REG_PKT_SIZE_MODE, 0);
-    val = reg_read(s, REG_PKT_SIZE_MODE);
-    g_assert_cmpuint(val, ==, 0);
-
-    phantomfpga_test_stop(s);
-}
-
-/*
- * Test PKT_SIZE_MAX register for variable mode
- */
-static void test_pkt_size_max(void)
-{
-    PhantomFPGATestState *s = phantomfpga_test_start();
-    uint32_t val;
-
-    /* Default value */
-    val = reg_read(s, REG_PKT_SIZE_MAX);
-    g_assert_cmpuint(val, ==, DEFAULT_PKT_SIZE_MAX);
-
-    /* Set valid value */
-    reg_write(s, REG_PKT_SIZE_MAX, 1024);
-    val = reg_read(s, REG_PKT_SIZE_MAX);
-    g_assert_cmpuint(val, ==, 1024);
-
-    /* Set maximum */
-    reg_write(s, REG_PKT_SIZE_MAX, MAX_PKT_SIZE);
-    val = reg_read(s, REG_PKT_SIZE_MAX);
-    g_assert_cmpuint(val, ==, MAX_PKT_SIZE);
-
-    /* Value above maximum should be clamped */
-    reg_write(s, REG_PKT_SIZE_MAX, MAX_PKT_SIZE + 1000);
-    val = reg_read(s, REG_PKT_SIZE_MAX);
-    g_assert_cmpuint(val, ==, MAX_PKT_SIZE);
-
-    phantomfpga_test_stop(s);
-}
-
-/*
- * Test PKT_RATE register write/read
- */
-static void test_pkt_rate(void)
-{
-    PhantomFPGATestState *s = phantomfpga_test_start();
-    uint32_t val;
-
-    /* Default value */
-    val = reg_read(s, REG_PKT_RATE);
-    g_assert_cmpuint(val, ==, DEFAULT_PKT_RATE);
-
-    /* Set valid value */
-    reg_write(s, REG_PKT_RATE, 500);
-    val = reg_read(s, REG_PKT_RATE);
-    g_assert_cmpuint(val, ==, 500);
+    reg_write(s, REG_FRAME_RATE, 30);
+    val = reg_read(s, REG_FRAME_RATE);
+    g_assert_cmpuint(val, ==, 30);
 
     /* Minimum */
-    reg_write(s, REG_PKT_RATE, MIN_PKT_RATE);
-    val = reg_read(s, REG_PKT_RATE);
-    g_assert_cmpuint(val, ==, MIN_PKT_RATE);
+    reg_write(s, REG_FRAME_RATE, MIN_FRAME_RATE);
+    val = reg_read(s, REG_FRAME_RATE);
+    g_assert_cmpuint(val, ==, MIN_FRAME_RATE);
 
     /* Maximum */
-    reg_write(s, REG_PKT_RATE, MAX_PKT_RATE);
-    val = reg_read(s, REG_PKT_RATE);
-    g_assert_cmpuint(val, ==, MAX_PKT_RATE);
+    reg_write(s, REG_FRAME_RATE, MAX_FRAME_RATE);
+    val = reg_read(s, REG_FRAME_RATE);
+    g_assert_cmpuint(val, ==, MAX_FRAME_RATE);
 
     phantomfpga_test_stop(s);
 }
 
 /*
- * Test PKT_RATE clamping
+ * Test FRAME_RATE clamping
  */
-static void test_pkt_rate_clamping(void)
+static void test_frame_rate_clamping(void)
 {
     PhantomFPGATestState *s = phantomfpga_test_start();
     uint32_t val;
 
     /* Value below minimum */
-    reg_write(s, REG_PKT_RATE, 0);
-    val = reg_read(s, REG_PKT_RATE);
-    g_assert_cmpuint(val, ==, MIN_PKT_RATE);
+    reg_write(s, REG_FRAME_RATE, 0);
+    val = reg_read(s, REG_FRAME_RATE);
+    g_assert_cmpuint(val, ==, MIN_FRAME_RATE);
 
     /* Value above maximum */
-    reg_write(s, REG_PKT_RATE, MAX_PKT_RATE + 1000);
-    val = reg_read(s, REG_PKT_RATE);
-    g_assert_cmpuint(val, ==, MAX_PKT_RATE);
-
-    phantomfpga_test_stop(s);
-}
-
-/* ------------------------------------------------------------------------ */
-/* Header Profile Tests                                                     */
-/* Pick your level of complexity                                            */
-/* ------------------------------------------------------------------------ */
-
-/*
- * Test HDR_PROFILE register
- */
-static void test_hdr_profile(void)
-{
-    PhantomFPGATestState *s = phantomfpga_test_start();
-    uint32_t val;
-
-    /* Default is Simple (0) */
-    val = reg_read(s, REG_HDR_PROFILE);
-    g_assert_cmpuint(val, ==, HDR_PROFILE_SIMPLE);
-
-    /* Set Standard */
-    reg_write(s, REG_HDR_PROFILE, HDR_PROFILE_STANDARD);
-    val = reg_read(s, REG_HDR_PROFILE);
-    g_assert_cmpuint(val, ==, HDR_PROFILE_STANDARD);
-
-    /* Set Full */
-    reg_write(s, REG_HDR_PROFILE, HDR_PROFILE_FULL);
-    val = reg_read(s, REG_HDR_PROFILE);
-    g_assert_cmpuint(val, ==, HDR_PROFILE_FULL);
-
-    /* Back to Simple */
-    reg_write(s, REG_HDR_PROFILE, HDR_PROFILE_SIMPLE);
-    val = reg_read(s, REG_HDR_PROFILE);
-    g_assert_cmpuint(val, ==, HDR_PROFILE_SIMPLE);
+    reg_write(s, REG_FRAME_RATE, MAX_FRAME_RATE + 100);
+    val = reg_read(s, REG_FRAME_RATE);
+    g_assert_cmpuint(val, ==, MAX_FRAME_RATE);
 
     phantomfpga_test_stop(s);
 }
 
 /*
- * Test HDR_PROFILE clamping for invalid values
+ * Test CURRENT_FRAME register is initially 0 and read-only
  */
-static void test_hdr_profile_clamping(void)
+static void test_current_frame(void)
 {
     PhantomFPGATestState *s = phantomfpga_test_start();
     uint32_t val;
 
-    /* Value above maximum should default to SIMPLE (safe fallback) */
-    reg_write(s, REG_HDR_PROFILE, HDR_PROFILE_MAX + 1);
-    val = reg_read(s, REG_HDR_PROFILE);
-    g_assert_cmpuint(val, ==, HDR_PROFILE_SIMPLE);
+    /* Initially 0 */
+    val = reg_read(s, REG_CURRENT_FRAME);
+    g_assert_cmpuint(val, ==, 0);
 
-    /* Way above maximum - also defaults to SIMPLE */
-    reg_write(s, REG_HDR_PROFILE, 0xFF);
-    val = reg_read(s, REG_HDR_PROFILE);
-    g_assert_cmpuint(val, ==, HDR_PROFILE_SIMPLE);
+    /* Try to write (should be ignored - read only) */
+    reg_write(s, REG_CURRENT_FRAME, 42);
+    val = reg_read(s, REG_CURRENT_FRAME);
+    g_assert_cmpuint(val, ==, 0);
 
     phantomfpga_test_stop(s);
 }
 
 /* ------------------------------------------------------------------------ */
 /* Descriptor Ring Configuration Tests                                      */
-/* The heart of the SG-DMA system                                           */
 /* ------------------------------------------------------------------------ */
 
-/*
- * Test descriptor ring address configuration (low and high parts)
- */
 static void test_desc_ring_addr(void)
 {
     PhantomFPGATestState *s = phantomfpga_test_start();
     uint32_t lo, hi;
 
-    /* Initially should be 0 */
     lo = reg_read(s, REG_DESC_RING_LO);
     hi = reg_read(s, REG_DESC_RING_HI);
     g_assert_cmpuint(lo, ==, 0);
     g_assert_cmpuint(hi, ==, 0);
 
-    /* Set low part */
     reg_write(s, REG_DESC_RING_LO, 0xDEADBEEF);
     lo = reg_read(s, REG_DESC_RING_LO);
     g_assert_cmpuint(lo, ==, 0xDEADBEEF);
 
-    /* Set high part */
     reg_write(s, REG_DESC_RING_HI, 0xCAFEBABE);
     hi = reg_read(s, REG_DESC_RING_HI);
     g_assert_cmpuint(hi, ==, 0xCAFEBABE);
 
-    /* Both should be preserved */
     lo = reg_read(s, REG_DESC_RING_LO);
     hi = reg_read(s, REG_DESC_RING_HI);
     g_assert_cmpuint(lo, ==, 0xDEADBEEF);
@@ -624,19 +441,14 @@ static void test_desc_ring_addr(void)
     phantomfpga_test_stop(s);
 }
 
-/*
- * Test DESC_RING_SIZE register and power-of-2 enforcement
- */
 static void test_desc_ring_size(void)
 {
     PhantomFPGATestState *s = phantomfpga_test_start();
     uint32_t val;
 
-    /* Default value */
     val = reg_read(s, REG_DESC_RING_SIZE);
     g_assert_cmpuint(val, ==, DEFAULT_DESC_RING_SIZE);
 
-    /* Set power of 2 */
     reg_write(s, REG_DESC_RING_SIZE, 128);
     val = reg_read(s, REG_DESC_RING_SIZE);
     g_assert_cmpuint(val, ==, 128);
@@ -644,29 +456,24 @@ static void test_desc_ring_size(void)
     /* Non-power-of-2 should be rounded down */
     reg_write(s, REG_DESC_RING_SIZE, 100);
     val = reg_read(s, REG_DESC_RING_SIZE);
-    g_assert_cmpuint(val, ==, 64);  /* Rounded down to 64 */
+    g_assert_cmpuint(val, ==, 64);
 
     reg_write(s, REG_DESC_RING_SIZE, 200);
     val = reg_read(s, REG_DESC_RING_SIZE);
-    g_assert_cmpuint(val, ==, 128);  /* Rounded down to 128 */
+    g_assert_cmpuint(val, ==, 128);
 
     phantomfpga_test_stop(s);
 }
 
-/*
- * Test DESC_RING_SIZE clamping
- */
 static void test_desc_ring_size_clamping(void)
 {
     PhantomFPGATestState *s = phantomfpga_test_start();
     uint32_t val;
 
-    /* Value below minimum */
     reg_write(s, REG_DESC_RING_SIZE, 1);
     val = reg_read(s, REG_DESC_RING_SIZE);
     g_assert_cmpuint(val, ==, MIN_DESC_RING_SIZE);
 
-    /* Value above maximum */
     reg_write(s, REG_DESC_RING_SIZE, MAX_DESC_RING_SIZE + 1000);
     val = reg_read(s, REG_DESC_RING_SIZE);
     g_assert_cmpuint(val, ==, MAX_DESC_RING_SIZE);
@@ -674,19 +481,14 @@ static void test_desc_ring_size_clamping(void)
     phantomfpga_test_stop(s);
 }
 
-/*
- * Test DESC_HEAD register (driver writes to submit descriptors)
- */
 static void test_desc_head(void)
 {
     PhantomFPGATestState *s = phantomfpga_test_start();
     uint32_t val;
 
-    /* Initially 0 */
     val = reg_read(s, REG_DESC_HEAD);
     g_assert_cmpuint(val, ==, 0);
 
-    /* Set a value */
     reg_write(s, REG_DESC_HEAD, 10);
     val = reg_read(s, REG_DESC_HEAD);
     g_assert_cmpuint(val, ==, 10);
@@ -694,9 +496,6 @@ static void test_desc_head(void)
     phantomfpga_test_stop(s);
 }
 
-/*
- * Test DESC_HEAD wrapping (value >= ring_size is masked)
- */
 static void test_desc_head_wrapping(void)
 {
     PhantomFPGATestState *s = phantomfpga_test_start();
@@ -704,28 +503,21 @@ static void test_desc_head_wrapping(void)
 
     ring_size = reg_read(s, REG_DESC_RING_SIZE);
 
-    /* Set value >= ring_size (should be masked) */
     reg_write(s, REG_DESC_HEAD, ring_size + 5);
     val = reg_read(s, REG_DESC_HEAD);
-    g_assert_cmpuint(val, ==, 5);  /* Masked to (ring_size + 5) & (ring_size - 1) */
+    g_assert_cmpuint(val, ==, 5);
 
     phantomfpga_test_stop(s);
 }
 
-/*
- * Test DESC_TAIL is initially 0 and read-only
- * The device updates this, not you.
- */
 static void test_desc_tail(void)
 {
     PhantomFPGATestState *s = phantomfpga_test_start();
     uint32_t val;
 
-    /* Initially 0 */
     val = reg_read(s, REG_DESC_TAIL);
     g_assert_cmpuint(val, ==, 0);
 
-    /* Try to write (should be ignored - read only) */
     reg_write(s, REG_DESC_TAIL, 42);
     val = reg_read(s, REG_DESC_TAIL);
     g_assert_cmpuint(val, ==, 0);
@@ -735,32 +527,24 @@ static void test_desc_tail(void)
 
 /* ------------------------------------------------------------------------ */
 /* IRQ Register Tests                                                       */
-/* The "please tell me something happened" tests                            */
 /* ------------------------------------------------------------------------ */
 
-/*
- * Test IRQ mask register
- */
 static void test_irq_mask(void)
 {
     PhantomFPGATestState *s = phantomfpga_test_start();
     uint32_t val;
 
-    /* Initially 0 */
     val = reg_read(s, REG_IRQ_MASK);
     g_assert_cmpuint(val, ==, 0);
 
-    /* Enable complete IRQ */
     reg_write(s, REG_IRQ_MASK, IRQ_COMPLETE);
     val = reg_read(s, REG_IRQ_MASK);
     g_assert_cmpuint(val, ==, IRQ_COMPLETE);
 
-    /* Enable all */
     reg_write(s, REG_IRQ_MASK, IRQ_ALL_BITS);
     val = reg_read(s, REG_IRQ_MASK);
     g_assert_cmpuint(val, ==, IRQ_ALL_BITS);
 
-    /* Only valid bits should be written */
     reg_write(s, REG_IRQ_MASK, 0xFFFFFFFF);
     val = reg_read(s, REG_IRQ_MASK);
     g_assert_cmpuint(val, ==, IRQ_ALL_BITS);
@@ -768,9 +552,6 @@ static void test_irq_mask(void)
     phantomfpga_test_stop(s);
 }
 
-/*
- * Test IRQ status is initially 0
- */
 static void test_irq_status_initial(void)
 {
     PhantomFPGATestState *s = phantomfpga_test_start();
@@ -782,19 +563,11 @@ static void test_irq_status_initial(void)
     phantomfpga_test_stop(s);
 }
 
-/*
- * Test IRQ status write-1-to-clear behavior
- */
 static void test_irq_status_w1c(void)
 {
     PhantomFPGATestState *s = phantomfpga_test_start();
     uint32_t val;
 
-    /*
-     * We cannot directly set IRQ status (it's set by hardware),
-     * but we can test that write-1-to-clear does nothing when
-     * status is already 0 (should stay 0).
-     */
     reg_write(s, REG_IRQ_STATUS, IRQ_COMPLETE);
     val = reg_read(s, REG_IRQ_STATUS);
     g_assert_cmpuint(val, ==, 0);
@@ -802,26 +575,19 @@ static void test_irq_status_w1c(void)
     phantomfpga_test_stop(s);
 }
 
-/*
- * Test IRQ_COALESCE register
- * Lower 16 bits = packet count threshold
- * Upper 16 bits = timeout in microseconds
- */
 static void test_irq_coalesce(void)
 {
     PhantomFPGATestState *s = phantomfpga_test_start();
     uint32_t val;
 
-    /* Default value */
     val = reg_read(s, REG_IRQ_COALESCE);
     g_assert_cmpuint(val, ==, DEFAULT_IRQ_COALESCE);
 
-    /* Set custom value: 32 packets, 500us timeout */
-    reg_write(s, REG_IRQ_COALESCE, (500 << 16) | 32);
+    /* Set custom value: 16 frames, 20ms timeout */
+    reg_write(s, REG_IRQ_COALESCE, (20000 << 16) | 16);
     val = reg_read(s, REG_IRQ_COALESCE);
-    g_assert_cmpuint(val, ==, (500 << 16) | 32);
+    g_assert_cmpuint(val, ==, (20000 << 16) | 16);
 
-    /* Set max values */
     reg_write(s, REG_IRQ_COALESCE, 0xFFFFFFFF);
     val = reg_read(s, REG_IRQ_COALESCE);
     g_assert_cmpuint(val, ==, 0xFFFFFFFF);
@@ -831,19 +597,17 @@ static void test_irq_coalesce(void)
 
 /* ------------------------------------------------------------------------ */
 /* Statistics Register Tests                                                */
-/* The "how are we doing?" counters                                         */
 /* ------------------------------------------------------------------------ */
 
-/*
- * Test statistics registers are initially 0 and read-only
- */
 static void test_stats_initial(void)
 {
     PhantomFPGATestState *s = phantomfpga_test_start();
     uint32_t val;
 
-    /* All should be 0 initially */
-    val = reg_read(s, REG_STAT_PACKETS);
+    val = reg_read(s, REG_STAT_FRAMES_TX);
+    g_assert_cmpuint(val, ==, 0);
+
+    val = reg_read(s, REG_STAT_FRAMES_DROP);
     g_assert_cmpuint(val, ==, 0);
 
     val = reg_read(s, REG_STAT_BYTES_LO);
@@ -861,17 +625,17 @@ static void test_stats_initial(void)
     phantomfpga_test_stop(s);
 }
 
-/*
- * Test statistics registers are read-only
- */
 static void test_stats_readonly(void)
 {
     PhantomFPGATestState *s = phantomfpga_test_start();
     uint32_t val;
 
-    /* Try to write (should be ignored) */
-    reg_write(s, REG_STAT_PACKETS, 999);
-    val = reg_read(s, REG_STAT_PACKETS);
+    reg_write(s, REG_STAT_FRAMES_TX, 999);
+    val = reg_read(s, REG_STAT_FRAMES_TX);
+    g_assert_cmpuint(val, ==, 0);
+
+    reg_write(s, REG_STAT_FRAMES_DROP, 999);
+    val = reg_read(s, REG_STAT_FRAMES_DROP);
     g_assert_cmpuint(val, ==, 0);
 
     reg_write(s, REG_STAT_ERRORS, 999);
@@ -887,37 +651,29 @@ static void test_stats_readonly(void)
 
 /* ------------------------------------------------------------------------ */
 /* Fault Injection Tests                                                    */
-/* For when you want to test your error handling                            */
+/* Simplified for frame-based streaming                                     */
 /* ------------------------------------------------------------------------ */
 
-/*
- * Test FAULT_INJECT register
- */
 static void test_fault_inject(void)
 {
     PhantomFPGATestState *s = phantomfpga_test_start();
     uint32_t val;
 
-    /* Initially 0 */
     val = reg_read(s, REG_FAULT_INJECT);
     g_assert_cmpuint(val, ==, 0);
 
-    /* Set drop packets fault */
-    reg_write(s, REG_FAULT_INJECT, FAULT_DROP_PACKET);
+    reg_write(s, REG_FAULT_INJECT, FAULT_DROP_FRAME);
     val = reg_read(s, REG_FAULT_INJECT);
-    g_assert_cmpuint(val, ==, FAULT_DROP_PACKET);
+    g_assert_cmpuint(val, ==, FAULT_DROP_FRAME);
 
-    /* Set CRC corruption faults */
-    reg_write(s, REG_FAULT_INJECT, FAULT_CORRUPT_HDR_CRC | FAULT_CORRUPT_PAY_CRC);
+    reg_write(s, REG_FAULT_INJECT, FAULT_CORRUPT_CRC | FAULT_CORRUPT_DATA);
     val = reg_read(s, REG_FAULT_INJECT);
-    g_assert_cmpuint(val, ==, FAULT_CORRUPT_HDR_CRC | FAULT_CORRUPT_PAY_CRC);
+    g_assert_cmpuint(val, ==, FAULT_CORRUPT_CRC | FAULT_CORRUPT_DATA);
 
-    /* Set all faults */
     reg_write(s, REG_FAULT_INJECT, FAULT_ALL_BITS);
     val = reg_read(s, REG_FAULT_INJECT);
     g_assert_cmpuint(val, ==, FAULT_ALL_BITS);
 
-    /* Only valid bits should be written */
     reg_write(s, REG_FAULT_INJECT, 0xFFFFFFFF);
     val = reg_read(s, REG_FAULT_INJECT);
     g_assert_cmpuint(val, ==, FAULT_ALL_BITS);
@@ -925,25 +681,20 @@ static void test_fault_inject(void)
     phantomfpga_test_stop(s);
 }
 
-/*
- * Test FAULT_RATE register
- * Controls probability: ~1 in N packets affected.
- */
 static void test_fault_rate(void)
 {
     PhantomFPGATestState *s = phantomfpga_test_start();
     uint32_t val;
 
-    /* Default value */
     val = reg_read(s, REG_FAULT_RATE);
     g_assert_cmpuint(val, ==, DEFAULT_FAULT_RATE);
 
-    /* Set aggressive rate (10% of packets) */
+    /* Set aggressive rate (10% of frames) */
     reg_write(s, REG_FAULT_RATE, 10);
     val = reg_read(s, REG_FAULT_RATE);
     g_assert_cmpuint(val, ==, 10);
 
-    /* Set conservative rate (0.01% of packets) */
+    /* Set conservative rate (0.01% of frames) */
     reg_write(s, REG_FAULT_RATE, 10000);
     val = reg_read(s, REG_FAULT_RATE);
     g_assert_cmpuint(val, ==, 10000);
@@ -958,12 +709,8 @@ static void test_fault_rate(void)
 
 /* ------------------------------------------------------------------------ */
 /* Status Register Tests                                                    */
-/* The "what's the device doing?" indicator                                 */
 /* ------------------------------------------------------------------------ */
 
-/*
- * Test STATUS register is initially 0 and read-only
- */
 static void test_status_initial(void)
 {
     PhantomFPGATestState *s = phantomfpga_test_start();
@@ -972,7 +719,6 @@ static void test_status_initial(void)
     val = reg_read(s, REG_STATUS);
     g_assert_cmpuint(val, ==, 0);
 
-    /* Try to write (should be ignored) */
     reg_write(s, REG_STATUS, 0xFF);
     val = reg_read(s, REG_STATUS);
     g_assert_cmpuint(val, ==, 0);
@@ -980,80 +726,59 @@ static void test_status_initial(void)
     phantomfpga_test_stop(s);
 }
 
-/*
- * Test that STATUS shows RUNNING when started
- */
 static void test_status_running(void)
 {
     PhantomFPGATestState *s = phantomfpga_test_start();
     uint32_t val;
 
-    /* Not running initially */
     val = reg_read(s, REG_STATUS);
     g_assert_cmpuint(val & STATUS_RUNNING, ==, 0);
 
-    /* Start the device */
     reg_write(s, REG_CTRL, CTRL_RUN);
 
-    /* Should now be running */
     val = reg_read(s, REG_STATUS);
     g_assert_cmpuint(val & STATUS_RUNNING, ==, STATUS_RUNNING);
 
-    /* Stop the device */
     reg_write(s, REG_CTRL, 0);
 
-    /* Should no longer be running */
     val = reg_read(s, REG_STATUS);
     g_assert_cmpuint(val & STATUS_RUNNING, ==, 0);
 
     phantomfpga_test_stop(s);
 }
 
-/*
- * Test that STATUS shows DESC_EMPTY when no descriptors submitted
- */
 static void test_status_desc_empty(void)
 {
     PhantomFPGATestState *s = phantomfpga_test_start();
     uint32_t val;
 
-    /* Configure ring but don't submit any descriptors */
     reg_write(s, REG_DESC_RING_LO, 0x10000000);
     reg_write(s, REG_DESC_RING_HI, 0);
     reg_write(s, REG_DESC_RING_SIZE, 256);
 
-    /* Start the device */
     reg_write(s, REG_CTRL, CTRL_RUN);
 
-    /* Advance virtual clock so packet timer fires and discovers no descriptors */
     qtest_clock_step_next(s->qts);
 
-    /* Should show DESC_EMPTY since HEAD == TAIL */
     val = reg_read(s, REG_STATUS);
     g_assert_cmpuint(val & STATUS_DESC_EMPTY, ==, STATUS_DESC_EMPTY);
 
-    /* Stop the device */
     reg_write(s, REG_CTRL, 0);
 
     phantomfpga_test_stop(s);
 }
 
 /* ------------------------------------------------------------------------ */
-/* Packet Production Tests                                                  */
-/* The "does it actually do anything?" tests                                */
+/* Frame Production Tests                                                   */
 /* ------------------------------------------------------------------------ */
 
-/*
- * Test that descriptor tail increments when device is running with descriptors
- * Note: This requires the virtual clock to advance
- */
-static void test_packet_production(void)
+static void test_frame_production(void)
 {
     PhantomFPGATestState *s = phantomfpga_test_start();
     uint32_t tail_before, tail_after;
-    uint32_t stat_packets_before, stat_packets_after;
+    uint32_t stat_frames_before, stat_frames_after;
     const int num_descs = 16;
-    const uint32_t buf_size = 4096;  /* 4KB buffer per descriptor */
+    const uint32_t buf_size = FRAME_SIZE + COMPL_SIZE;
     uint64_t desc_ring_addr;
     uint64_t buf_addrs[16];
     TestSGDesc desc;
@@ -1062,19 +787,17 @@ static void test_packet_production(void)
     /* Allocate descriptor ring in guest memory */
     desc_ring_addr = guest_alloc(&s->alloc, num_descs * DESC_SIZE);
 
-    /* Allocate packet buffers and initialize descriptors */
+    /* Allocate frame buffers and initialize descriptors */
     for (i = 0; i < num_descs; i++) {
         buf_addrs[i] = guest_alloc(&s->alloc, buf_size);
 
-        /* Initialize descriptor */
         memset(&desc, 0, sizeof(desc));
-        desc.control = 0;  /* Device will set COMPLETED */
+        desc.control = 0;
         desc.length = buf_size;
         desc.dst_addr = buf_addrs[i];
         desc.next_desc = 0;
         desc.reserved = 0;
 
-        /* Write descriptor to guest memory */
         qtest_memwrite(s->qts, desc_ring_addr + i * DESC_SIZE,
                        &desc, sizeof(desc));
     }
@@ -1084,27 +807,23 @@ static void test_packet_production(void)
     reg_write(s, REG_DESC_RING_HI, (uint32_t)(desc_ring_addr >> 32));
     reg_write(s, REG_DESC_RING_SIZE, num_descs);
 
-    /* Submit descriptors by advancing HEAD */
-    reg_write(s, REG_DESC_HEAD, 8);  /* Submit 8 descriptors */
+    /* Submit descriptors */
+    reg_write(s, REG_DESC_HEAD, 8);
 
-    /* Use simple header profile and small packet size for testing */
-    reg_write(s, REG_HDR_PROFILE, HDR_PROFILE_SIMPLE);
-    reg_write(s, REG_PKT_SIZE, 32);  /* 32 * 8 = 256 byte packets */
-
-    /* Set a high packet rate for fast testing */
-    reg_write(s, REG_PKT_RATE, 10000);  /* 10 kHz */
+    /* Set high frame rate for fast testing */
+    reg_write(s, REG_FRAME_RATE, 60);
 
     tail_before = reg_read(s, REG_DESC_TAIL);
-    stat_packets_before = reg_read(s, REG_STAT_PACKETS);
+    stat_frames_before = reg_read(s, REG_STAT_FRAMES_TX);
 
     /* Start the device */
     reg_write(s, REG_CTRL, CTRL_RUN);
 
-    /* Advance the clock to produce packets (1ms should be plenty at 10kHz) */
-    qtest_clock_step(s->qts, 1000 * 1000);  /* 1ms in ns */
+    /* Advance the clock to produce frames */
+    qtest_clock_step(s->qts, 200 * 1000 * 1000);  /* 200ms */
 
     tail_after = reg_read(s, REG_DESC_TAIL);
-    stat_packets_after = reg_read(s, REG_STAT_PACKETS);
+    stat_frames_after = reg_read(s, REG_STAT_FRAMES_TX);
 
     /* Stop the device */
     reg_write(s, REG_CTRL, 0);
@@ -1112,8 +831,8 @@ static void test_packet_production(void)
     /* Descriptor tail should have advanced */
     g_assert_cmpuint(tail_after, >, tail_before);
 
-    /* Packet counter should have increased */
-    g_assert_cmpuint(stat_packets_after, >, stat_packets_before);
+    /* Frame counter should have increased */
+    g_assert_cmpuint(stat_frames_after, >, stat_frames_before);
 
     /* Verify first descriptor was marked completed */
     qtest_memread(s->qts, desc_ring_addr, &desc, sizeof(desc));
@@ -1128,35 +847,27 @@ static void test_packet_production(void)
     phantomfpga_test_stop(s);
 }
 
-/*
- * Test that tail does not advance without descriptors submitted
- */
-static void test_no_packets_without_descriptors(void)
+static void test_no_frames_without_descriptors(void)
 {
     PhantomFPGATestState *s = phantomfpga_test_start();
     uint32_t tail_before, tail_after;
     const int num_descs = 16;
     uint64_t desc_ring_addr;
 
-    /* Allocate descriptor ring but don't populate or submit */
     desc_ring_addr = guest_alloc(&s->alloc, num_descs * DESC_SIZE);
 
-    /* Configure ring but don't submit descriptors (HEAD stays at 0) */
     reg_write(s, REG_DESC_RING_LO, (uint32_t)(desc_ring_addr & 0xFFFFFFFF));
     reg_write(s, REG_DESC_RING_HI, (uint32_t)(desc_ring_addr >> 32));
     reg_write(s, REG_DESC_RING_SIZE, num_descs);
-    /* HEAD is 0 by default, TAIL is 0 - no descriptors available */
+    /* HEAD is 0, TAIL is 0 - no descriptors available */
 
-    /* Set a high packet rate */
-    reg_write(s, REG_PKT_RATE, 10000);
+    reg_write(s, REG_FRAME_RATE, 60);
 
     tail_before = reg_read(s, REG_DESC_TAIL);
 
-    /* Start the device */
     reg_write(s, REG_CTRL, CTRL_RUN);
 
-    /* Advance clock */
-    qtest_clock_step(s->qts, 1000 * 1000);  /* 1ms */
+    qtest_clock_step(s->qts, 100 * 1000 * 1000);
 
     tail_after = reg_read(s, REG_DESC_TAIL);
 
@@ -1167,10 +878,12 @@ static void test_no_packets_without_descriptors(void)
     uint32_t status = reg_read(s, REG_STATUS);
     g_assert_cmpuint(status & STATUS_DESC_EMPTY, ==, STATUS_DESC_EMPTY);
 
-    /* Stop and reset */
+    /* Frames should have been dropped */
+    uint32_t dropped = reg_read(s, REG_STAT_FRAMES_DROP);
+    g_assert_cmpuint(dropped, >, 0);
+
     reg_write(s, REG_CTRL, CTRL_RESET);
 
-    /* Clean up */
     guest_free(&s->alloc, desc_ring_addr);
 
     phantomfpga_test_stop(s);
@@ -1178,24 +891,15 @@ static void test_no_packets_without_descriptors(void)
 
 /* ------------------------------------------------------------------------ */
 /* Reset Behavior Tests                                                     */
-/* The "big red button" tests                                               */
 /* ------------------------------------------------------------------------ */
 
-/*
- * Test full device reset clears all state
- * Sometimes you just want to start over.
- */
 static void test_full_reset(void)
 {
     PhantomFPGATestState *s = phantomfpga_test_start();
     uint32_t val;
 
     /* Configure everything to non-default values */
-    reg_write(s, REG_PKT_SIZE, 512);
-    reg_write(s, REG_PKT_SIZE_MAX, 1024);
-    reg_write(s, REG_PKT_SIZE_MODE, 1);
-    reg_write(s, REG_PKT_RATE, 500);
-    reg_write(s, REG_HDR_PROFILE, HDR_PROFILE_FULL);
+    reg_write(s, REG_FRAME_RATE, 30);
     reg_write(s, REG_DESC_RING_LO, 0xAAAAAAAA);
     reg_write(s, REG_DESC_RING_HI, 0xBBBBBBBB);
     reg_write(s, REG_DESC_RING_SIZE, 512);
@@ -1213,20 +917,8 @@ static void test_full_reset(void)
     val = reg_read(s, REG_CTRL);
     g_assert_cmpuint(val, ==, 0);
 
-    val = reg_read(s, REG_PKT_SIZE);
-    g_assert_cmpuint(val, ==, DEFAULT_PKT_SIZE);
-
-    val = reg_read(s, REG_PKT_SIZE_MAX);
-    g_assert_cmpuint(val, ==, DEFAULT_PKT_SIZE_MAX);
-
-    val = reg_read(s, REG_PKT_SIZE_MODE);
-    g_assert_cmpuint(val, ==, 0);
-
-    val = reg_read(s, REG_PKT_RATE);
-    g_assert_cmpuint(val, ==, DEFAULT_PKT_RATE);
-
-    val = reg_read(s, REG_HDR_PROFILE);
-    g_assert_cmpuint(val, ==, HDR_PROFILE_SIMPLE);
+    val = reg_read(s, REG_FRAME_RATE);
+    g_assert_cmpuint(val, ==, DEFAULT_FRAME_RATE);
 
     val = reg_read(s, REG_DESC_RING_LO);
     g_assert_cmpuint(val, ==, 0);
@@ -1252,7 +944,10 @@ static void test_full_reset(void)
     val = reg_read(s, REG_IRQ_COALESCE);
     g_assert_cmpuint(val, ==, DEFAULT_IRQ_COALESCE);
 
-    val = reg_read(s, REG_STAT_PACKETS);
+    val = reg_read(s, REG_STAT_FRAMES_TX);
+    g_assert_cmpuint(val, ==, 0);
+
+    val = reg_read(s, REG_STAT_FRAMES_DROP);
     g_assert_cmpuint(val, ==, 0);
 
     val = reg_read(s, REG_STAT_ERRORS);
@@ -1267,31 +962,31 @@ static void test_full_reset(void)
     val = reg_read(s, REG_FAULT_RATE);
     g_assert_cmpuint(val, ==, DEFAULT_FAULT_RATE);
 
+    /* Read-only frame registers should be unchanged */
+    val = reg_read(s, REG_FRAME_SIZE);
+    g_assert_cmpuint(val, ==, FRAME_SIZE);
+
+    val = reg_read(s, REG_FRAME_COUNT);
+    g_assert_cmpuint(val, ==, FRAME_COUNT);
+
     phantomfpga_test_stop(s);
 }
 
-/*
- * Test reset stops running device
- */
 static void test_reset_stops_device(void)
 {
     PhantomFPGATestState *s = phantomfpga_test_start();
     uint32_t val;
 
-    /* Configure and start */
     reg_write(s, REG_DESC_RING_LO, 0x10000000);
     reg_write(s, REG_DESC_RING_SIZE, 256);
     reg_write(s, REG_DESC_HEAD, 10);
     reg_write(s, REG_CTRL, CTRL_RUN);
 
-    /* Verify running */
     val = reg_read(s, REG_STATUS);
     g_assert_cmpuint(val & STATUS_RUNNING, ==, STATUS_RUNNING);
 
-    /* Reset */
     reg_write(s, REG_CTRL, CTRL_RESET);
 
-    /* Should no longer be running */
     val = reg_read(s, REG_STATUS);
     g_assert_cmpuint(val & STATUS_RUNNING, ==, 0);
 
@@ -1300,12 +995,8 @@ static void test_reset_stops_device(void)
 
 /* ------------------------------------------------------------------------ */
 /* PCI Configuration Tests                                                  */
-/* The "are you plugged in correctly?" tests                                */
 /* ------------------------------------------------------------------------ */
 
-/*
- * Test PCI vendor and device IDs
- */
 static void test_pci_ids(void)
 {
     PhantomFPGATestState *s = phantomfpga_test_start();
@@ -1322,7 +1013,6 @@ static void test_pci_ids(void)
 
 /* ------------------------------------------------------------------------ */
 /* Test Registration                                                        */
-/* All the tests, in one convenient list                                    */
 /* ------------------------------------------------------------------------ */
 
 int main(int argc, char **argv)
@@ -1339,17 +1029,12 @@ int main(int argc, char **argv)
     qtest_add_func("/phantomfpga/ctrl_write_read", test_ctrl_write_read);
     qtest_add_func("/phantomfpga/ctrl_reset", test_ctrl_reset);
 
-    /* Packet size configuration tests */
-    qtest_add_func("/phantomfpga/pkt_size", test_pkt_size);
-    qtest_add_func("/phantomfpga/pkt_size_clamping", test_pkt_size_clamping);
-    qtest_add_func("/phantomfpga/pkt_size_mode", test_pkt_size_mode);
-    qtest_add_func("/phantomfpga/pkt_size_max", test_pkt_size_max);
-    qtest_add_func("/phantomfpga/pkt_rate", test_pkt_rate);
-    qtest_add_func("/phantomfpga/pkt_rate_clamping", test_pkt_rate_clamping);
-
-    /* Header profile tests */
-    qtest_add_func("/phantomfpga/hdr_profile", test_hdr_profile);
-    qtest_add_func("/phantomfpga/hdr_profile_clamping", test_hdr_profile_clamping);
+    /* Frame configuration tests */
+    qtest_add_func("/phantomfpga/frame_size", test_frame_size);
+    qtest_add_func("/phantomfpga/frame_count", test_frame_count);
+    qtest_add_func("/phantomfpga/frame_rate", test_frame_rate);
+    qtest_add_func("/phantomfpga/frame_rate_clamping", test_frame_rate_clamping);
+    qtest_add_func("/phantomfpga/current_frame", test_current_frame);
 
     /* Descriptor ring configuration tests */
     qtest_add_func("/phantomfpga/desc_ring_addr", test_desc_ring_addr);
@@ -1378,10 +1063,10 @@ int main(int argc, char **argv)
     qtest_add_func("/phantomfpga/status_running", test_status_running);
     qtest_add_func("/phantomfpga/status_desc_empty", test_status_desc_empty);
 
-    /* Packet production tests */
-    qtest_add_func("/phantomfpga/packet_production", test_packet_production);
-    qtest_add_func("/phantomfpga/no_packets_without_descriptors",
-                   test_no_packets_without_descriptors);
+    /* Frame production tests */
+    qtest_add_func("/phantomfpga/frame_production", test_frame_production);
+    qtest_add_func("/phantomfpga/no_frames_without_descriptors",
+                   test_no_frames_without_descriptors);
 
     /* Reset tests */
     qtest_add_func("/phantomfpga/full_reset", test_full_reset);

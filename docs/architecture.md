@@ -467,7 +467,7 @@ on the back. Or a coffee. Or both.
 
 ## Next Steps
 
-- **[Register Reference](register-reference.md)** - The actual hardware interface
+- **[Device Datasheet](phantomfpga-datasheet.md)** - How the device works and the complete register reference
 - **[Driver Guide](driver-guide.md)** - Time to write some code
 
 ---

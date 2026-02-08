@@ -1,10 +1,11 @@
 /*
- * PhantomFPGA QEMU Device Definitions - v2.0 Scatter-Gather Edition
+ * PhantomFPGA QEMU Device Definitions - v3.0 ASCII Animation Edition
  *
- * A virtual FPGA device for testing scatter-gather DMA drivers.
- * Now with 100% more descriptors and 200% more CRCs!
+ * A virtual FPGA device that streams pre-built ASCII animation frames.
+ * The trainee's mission: build a driver, stream frames over TCP,
+ * watch a cartoon play in the terminal.
  *
- * "Because simple ring buffers are so 2023."
+ * "Because nothing says 'I learned DMA' like ASCII art."
  *
  * SPDX-License-Identifier: GPL-2.0-or-later
  */
@@ -24,76 +25,74 @@
 #define PHANTOMFPGA_VENDOR_ID       0x0DAD
 #define PHANTOMFPGA_DEVICE_ID       0xF00D
 #define PHANTOMFPGA_SUBSYS_VENDOR   0x0DAD
-#define PHANTOMFPGA_SUBSYS_ID       0x0001
-#define PHANTOMFPGA_REVISION        0x02     /* Bumped for v2.0 */
+#define PHANTOMFPGA_SUBSYS_ID       0x0003       /* ASCII Animation edition */
+#define PHANTOMFPGA_REVISION        0x03         /* v3.0 */
 
 /* ------------------------------------------------------------------------ */
 /* Device Constants                                                         */
 /* ------------------------------------------------------------------------ */
 
 #define PHANTOMFPGA_BAR0_SIZE       4096
-#define PHANTOMFPGA_PACKET_MAGIC    0xABCD1234
+#define PHANTOMFPGA_FRAME_MAGIC     0xF00DFACE   /* New magic for frames */
 #define PHANTOMFPGA_DEV_ID_VAL      0xF00DFACE
-#define PHANTOMFPGA_DEV_VER         0x00020000  /* v2.0.0 - SG-DMA edition */
-#define PHANTOMFPGA_MSIX_VECTORS    3           /* Complete, error, no_desc */
+#define PHANTOMFPGA_DEV_VER         0x00030000   /* v3.0.0 - ASCII Animation */
+#define PHANTOMFPGA_MSIX_VECTORS    3            /* Complete, error, no_desc */
 
-/* Default values - all sizes in 64-bit words where noted */
-#define PHANTOMFPGA_DEFAULT_PKT_SIZE    256     /* 256 * 8 = 2KB packets */
-#define PHANTOMFPGA_DEFAULT_PKT_SIZE_MAX 512    /* 512 * 8 = 4KB max */
-#define PHANTOMFPGA_DEFAULT_PKT_RATE    1000    /* Hz */
-#define PHANTOMFPGA_DEFAULT_DESC_COUNT  256     /* descriptors */
-#define PHANTOMFPGA_DEFAULT_IRQ_COUNT   16      /* packets before IRQ */
-#define PHANTOMFPGA_DEFAULT_IRQ_TIMEOUT 1000    /* microseconds */
-#define PHANTOMFPGA_DEFAULT_FAULT_RATE  1000    /* ~0.1% fault probability */
+/* Frame constants - from frames_data.h */
+#define PHANTOMFPGA_FRAME_SIZE      5120         /* Bytes per frame */
+#define PHANTOMFPGA_FRAME_COUNT     250          /* Total frames (10 sec @ 25fps) */
+#define PHANTOMFPGA_FRAME_DATA_SIZE 4995         /* ASCII data portion */
+#define PHANTOMFPGA_FRAME_ROWS      45
+#define PHANTOMFPGA_FRAME_COLS      110
 
-/* Limits - because users WILL try to break things */
-#define PHANTOMFPGA_MIN_PKT_SIZE        8       /* 64 bytes - fits largest header */
-#define PHANTOMFPGA_MAX_PKT_SIZE        8192    /* 64KB in 64-bit words */
+/* Default values */
+#define PHANTOMFPGA_DEFAULT_FRAME_RATE  25       /* 25 fps - smooth animation */
+#define PHANTOMFPGA_DEFAULT_DESC_COUNT  256
+#define PHANTOMFPGA_DEFAULT_IRQ_COUNT   8
+#define PHANTOMFPGA_DEFAULT_IRQ_TIMEOUT 40000    /* 40ms = 1 frame at 25fps */
+#define PHANTOMFPGA_DEFAULT_FAULT_RATE  1000
+
+/* Limits */
+#define PHANTOMFPGA_MIN_FRAME_RATE      1        /* 1 fps */
+#define PHANTOMFPGA_MAX_FRAME_RATE      60       /* 60 fps */
 #define PHANTOMFPGA_MIN_DESC_COUNT      4
 #define PHANTOMFPGA_MAX_DESC_COUNT      4096
-#define PHANTOMFPGA_MIN_PKT_RATE        1
-#define PHANTOMFPGA_MAX_PKT_RATE        100000
-
-/* Header profile sizes in bytes */
-#define PHANTOMFPGA_HDR_SIMPLE_SIZE     16
-#define PHANTOMFPGA_HDR_STANDARD_SIZE   32
-#define PHANTOMFPGA_HDR_FULL_SIZE       64
 
 /* ------------------------------------------------------------------------ */
-/* Register Offsets - The New World Order                                   */
+/* Register Offsets - Simplified for Animation                              */
 /* ------------------------------------------------------------------------ */
 
 /* Identification & Control */
-#define PHANTOMFPGA_REG_DEV_ID          0x000   /* R   - Device ID */
+#define PHANTOMFPGA_REG_DEV_ID          0x000   /* R   - Device ID (0xF00DFACE) */
 #define PHANTOMFPGA_REG_DEV_VER         0x004   /* R   - Device Version */
 #define PHANTOMFPGA_REG_CTRL            0x008   /* R/W - Control Register */
 #define PHANTOMFPGA_REG_STATUS          0x00C   /* R   - Status Register */
 
-/* Packet Configuration */
-#define PHANTOMFPGA_REG_PKT_SIZE_MODE   0x010   /* R/W - Variable size mode */
-#define PHANTOMFPGA_REG_PKT_SIZE        0x014   /* R/W - Packet size (64-bit words) */
-#define PHANTOMFPGA_REG_PKT_SIZE_MAX    0x018   /* R/W - Max size for variable mode */
-#define PHANTOMFPGA_REG_HEADER_PROFILE  0x01C   /* R/W - Header profile select */
-#define PHANTOMFPGA_REG_PACKET_RATE     0x020   /* R/W - Packets per second */
+/* Frame Configuration */
+#define PHANTOMFPGA_REG_FRAME_SIZE      0x010   /* R   - Frame size in bytes (5120) */
+#define PHANTOMFPGA_REG_FRAME_COUNT     0x014   /* R   - Total frames (250) */
+#define PHANTOMFPGA_REG_FRAME_RATE      0x018   /* R/W - Frames per second (1-60) */
+#define PHANTOMFPGA_REG_CURRENT_FRAME   0x01C   /* R   - Current frame index */
 
 /* Descriptor Ring Configuration */
-#define PHANTOMFPGA_REG_DESC_RING_LO    0x024   /* R/W - Descriptor ring base [31:0] */
-#define PHANTOMFPGA_REG_DESC_RING_HI    0x028   /* R/W - Descriptor ring base [63:32] */
-#define PHANTOMFPGA_REG_DESC_RING_SIZE  0x02C   /* R/W - Number of descriptors */
-#define PHANTOMFPGA_REG_DESC_HEAD       0x030   /* R/W - Head (driver submits) */
-#define PHANTOMFPGA_REG_DESC_TAIL       0x034   /* R   - Tail (device completes) */
+#define PHANTOMFPGA_REG_DESC_RING_LO    0x020   /* R/W - Descriptor ring base [31:0] */
+#define PHANTOMFPGA_REG_DESC_RING_HI    0x024   /* R/W - Descriptor ring base [63:32] */
+#define PHANTOMFPGA_REG_DESC_RING_SIZE  0x028   /* R/W - Number of descriptors */
+#define PHANTOMFPGA_REG_DESC_HEAD       0x02C   /* R/W - Head (driver submits) */
+#define PHANTOMFPGA_REG_DESC_TAIL       0x030   /* R   - Tail (device completes) */
 
 /* Interrupt Configuration */
-#define PHANTOMFPGA_REG_IRQ_STATUS      0x038   /* R/W - IRQ status (W1C) */
-#define PHANTOMFPGA_REG_IRQ_MASK        0x03C   /* R/W - IRQ enable bits */
-#define PHANTOMFPGA_REG_IRQ_COALESCE    0x040   /* R/W - Coalesce settings */
+#define PHANTOMFPGA_REG_IRQ_STATUS      0x034   /* R/W - IRQ status (W1C) */
+#define PHANTOMFPGA_REG_IRQ_MASK        0x038   /* R/W - IRQ enable bits */
+#define PHANTOMFPGA_REG_IRQ_COALESCE    0x03C   /* R/W - Coalesce settings */
 
 /* Statistics */
-#define PHANTOMFPGA_REG_STAT_PACKETS    0x044   /* R   - Packets produced */
+#define PHANTOMFPGA_REG_STAT_FRAMES_TX  0x040   /* R   - Frames transmitted */
+#define PHANTOMFPGA_REG_STAT_FRAMES_DROP 0x044  /* R   - Frames dropped (backpressure) */
 #define PHANTOMFPGA_REG_STAT_BYTES_LO   0x048   /* R   - Total bytes [31:0] */
 #define PHANTOMFPGA_REG_STAT_BYTES_HI   0x04C   /* R   - Total bytes [63:32] */
-#define PHANTOMFPGA_REG_STAT_ERRORS     0x050   /* R   - Error count */
-#define PHANTOMFPGA_REG_STAT_DESC_COMPL 0x054   /* R   - Descriptors completed */
+#define PHANTOMFPGA_REG_STAT_DESC_COMPL 0x050   /* R   - Descriptors completed */
+#define PHANTOMFPGA_REG_STAT_ERRORS     0x054   /* R   - Error count */
 
 /* Fault Injection */
 #define PHANTOMFPGA_REG_FAULT_INJECT    0x058   /* R/W - Fault injection control */
@@ -105,7 +104,7 @@
 /* Control Register (CTRL) Bits                                             */
 /* ------------------------------------------------------------------------ */
 
-#define PHANTOMFPGA_CTRL_RUN            (1 << 0)  /* Enable packet production */
+#define PHANTOMFPGA_CTRL_RUN            (1 << 0)  /* Enable frame transmission */
 #define PHANTOMFPGA_CTRL_RESET          (1 << 1)  /* Soft reset (self-clearing) */
 #define PHANTOMFPGA_CTRL_IRQ_EN         (1 << 2)  /* Global interrupt enable */
 
@@ -117,7 +116,7 @@
 /* Status Register (STATUS) Bits                                            */
 /* ------------------------------------------------------------------------ */
 
-#define PHANTOMFPGA_STATUS_RUNNING      (1 << 0)  /* Device is producing packets */
+#define PHANTOMFPGA_STATUS_RUNNING      (1 << 0)  /* Device is transmitting */
 #define PHANTOMFPGA_STATUS_DESC_EMPTY   (1 << 1)  /* No descriptors available */
 #define PHANTOMFPGA_STATUS_ERROR        (1 << 2)  /* Error condition */
 
@@ -148,43 +147,21 @@
 #define PHANTOMFPGA_IRQ_COAL_TIMEOUT_MASK   0xFFFF0000
 
 /* ------------------------------------------------------------------------ */
-/* Packet Size Mode Register                                                */
+/* Fault Injection Bits - Simplified for Frames                             */
 /* ------------------------------------------------------------------------ */
 
-#define PHANTOMFPGA_PKT_SIZE_FIXED      0    /* Use PKT_SIZE for all packets */
-#define PHANTOMFPGA_PKT_SIZE_VARIABLE   1    /* Random size in [PKT_SIZE, PKT_SIZE_MAX] */
+#define PHANTOMFPGA_FAULT_DROP_FRAME        (1 << 0)  /* Drop frames randomly */
+#define PHANTOMFPGA_FAULT_CORRUPT_CRC       (1 << 1)  /* Write wrong CRC value */
+#define PHANTOMFPGA_FAULT_CORRUPT_DATA      (1 << 2)  /* Flip bits in frame data */
+#define PHANTOMFPGA_FAULT_SKIP_SEQUENCE     (1 << 3)  /* Skip sequence numbers */
 
-/* ------------------------------------------------------------------------ */
-/* Header Profiles                                                          */
-/* ------------------------------------------------------------------------ */
-
-#define PHANTOMFPGA_HDR_PROFILE_SIMPLE      0   /* 16 bytes - just the basics */
-#define PHANTOMFPGA_HDR_PROFILE_STANDARD    1   /* 32 bytes - with CRC */
-#define PHANTOMFPGA_HDR_PROFILE_FULL        2   /* 64 bytes - the whole enchilada */
-
-/* ------------------------------------------------------------------------ */
-/* Fault Injection Bits - For When Things Are Going Too Well               */
-/* ------------------------------------------------------------------------ */
-
-#define PHANTOMFPGA_FAULT_DROP_PACKET       (1 << 0)  /* Drop packets randomly */
-#define PHANTOMFPGA_FAULT_CORRUPT_HDR_CRC   (1 << 1)  /* Corrupt header CRC32 */
-#define PHANTOMFPGA_FAULT_CORRUPT_PAY_CRC   (1 << 2)  /* Corrupt payload CRC32 */
-#define PHANTOMFPGA_FAULT_CORRUPT_PAYLOAD   (1 << 3)  /* Flip bits in payload */
-#define PHANTOMFPGA_FAULT_CORRUPT_SEQUENCE  (1 << 4)  /* Skip sequence numbers */
-#define PHANTOMFPGA_FAULT_DELAY_IRQ         (1 << 5)  /* Suppress interrupts */
-
-#define PHANTOMFPGA_FAULT_ALL               (PHANTOMFPGA_FAULT_DROP_PACKET | \
-                                             PHANTOMFPGA_FAULT_CORRUPT_HDR_CRC | \
-                                             PHANTOMFPGA_FAULT_CORRUPT_PAY_CRC | \
-                                             PHANTOMFPGA_FAULT_CORRUPT_PAYLOAD | \
-                                             PHANTOMFPGA_FAULT_CORRUPT_SEQUENCE | \
-                                             PHANTOMFPGA_FAULT_DELAY_IRQ)
+#define PHANTOMFPGA_FAULT_ALL               (PHANTOMFPGA_FAULT_DROP_FRAME | \
+                                             PHANTOMFPGA_FAULT_CORRUPT_CRC | \
+                                             PHANTOMFPGA_FAULT_CORRUPT_DATA | \
+                                             PHANTOMFPGA_FAULT_SKIP_SEQUENCE)
 
 /* ------------------------------------------------------------------------ */
 /* Scatter-Gather Descriptor Structure (32 bytes)                           */
-/*                                                                          */
-/* Inspired by Xilinx XDMA because imitation is the sincerest form of       */
-/* "we needed something that real drivers understand."                      */
 /* ------------------------------------------------------------------------ */
 
 #define PHANTOMFPGA_DESC_CTRL_COMPLETED (1 << 0)  /* Device sets when done */
@@ -193,11 +170,6 @@
 #define PHANTOMFPGA_DESC_CTRL_IRQ       (1 << 3)  /* Generate IRQ on completion */
 #define PHANTOMFPGA_DESC_CTRL_STOP      (1 << 4)  /* Stop after this descriptor */
 
-/*
- * The descriptor lives in host memory. Device fetches it, uses it,
- * and sets COMPLETED when done. It's like a restaurant ticket system,
- * except the food is data and the kitchen is a virtual FPGA.
- */
 typedef struct PhantomFPGASGDesc {
     uint32_t control;       /* Flags: COMPLETED, EOP, SOP, IRQ, STOP */
     uint32_t length;        /* Buffer length in bytes */
@@ -210,10 +182,6 @@ typedef struct PhantomFPGASGDesc {
 
 /* ------------------------------------------------------------------------ */
 /* Completion Writeback Structure (16 bytes)                                */
-/*                                                                          */
-/* Written at the end of each buffer so the driver knows what happened.     */
-/* Because "trust but verify" is good life advice and even better DMA       */
-/* design philosophy.                                                       */
 /* ------------------------------------------------------------------------ */
 
 #define PHANTOMFPGA_COMPL_STATUS_OK         0
@@ -229,46 +197,15 @@ typedef struct PhantomFPGACompletion {
 #define PHANTOMFPGA_COMPL_SIZE  sizeof(PhantomFPGACompletion)  /* 16 bytes */
 
 /* ------------------------------------------------------------------------ */
-/* Packet Header Structures                                                 */
-/*                                                                          */
-/* Three profiles, from "I just want data" to "I want ALL the metadata."    */
-/* Pick your poison. Or let your trainees pick theirs.                      */
+/* Frame Header Structure (16 bytes)                                        */
+/* Matches what's in each pre-built frame                                   */
 /* ------------------------------------------------------------------------ */
 
-/* Profile 0: Simple (16 bytes) - For minimalists */
-typedef struct PhantomFPGAHdrSimple {
-    uint32_t magic;         /* 0xABCD1234 - the universal "hello" */
-    uint32_t sequence;      /* Packet sequence number */
-    uint32_t size;          /* Total packet size */
-    uint32_t reserved;      /* Padding to 16 bytes */
-} QEMU_PACKED PhantomFPGAHdrSimple;
-
-/* Profile 1: Standard (32 bytes) - The sensible middle ground */
-typedef struct PhantomFPGAHdrStandard {
-    uint32_t magic;         /* 0xABCD1234 */
-    uint32_t sequence;      /* Packet sequence number */
-    uint64_t timestamp;     /* Nanosecond timestamp */
-    uint32_t size;          /* Total packet size */
-    uint32_t counter;       /* Running counter (device uptime indicator) */
-    uint32_t hdr_crc32;     /* CRC32 of bytes [0x00-0x17] */
-    uint32_t reserved;      /* Padding to 32 bytes */
-} QEMU_PACKED PhantomFPGAHdrStandard;
-
-/* Profile 2: Full (64 bytes) - For those who really like their metadata */
-typedef struct PhantomFPGAHdrFull {
-    uint32_t magic;         /* 0xABCD1234 */
-    uint32_t version;       /* Header version (0x00020000) */
-    uint32_t sequence;      /* Packet sequence number */
-    uint32_t flags;         /* Packet flags (reserved for now) */
-    uint64_t timestamp;     /* Nanosecond timestamp */
-    uint64_t mono_counter;  /* 64-bit monotonic counter */
-    uint32_t size;          /* Total packet size */
-    uint32_t payload_size;  /* Payload size (size - header) */
-    uint32_t hdr_crc32;     /* CRC32 of bytes [0x00-0x27] */
-    uint32_t payload_crc32; /* CRC32 of payload bytes */
-    uint64_t channel;       /* Source channel ID */
-    uint64_t reserved;      /* Future use */
-} QEMU_PACKED PhantomFPGAHdrFull;
+typedef struct PhantomFPGAFrameHeader {
+    uint32_t magic;         /* 0xF00DFACE */
+    uint32_t sequence;      /* Frame sequence number (0-249, wraps) */
+    uint64_t timestamp;     /* Nanoseconds since device start */
+} QEMU_PACKED PhantomFPGAFrameHeader;
 
 /* ------------------------------------------------------------------------ */
 /* QOM Type Definitions                                                     */
@@ -292,9 +229,9 @@ typedef struct PhantomFPGAState {
     /* MSI-X configuration */
     bool msix_enabled;
 
-    /* Packet production timer */
-    QEMUTimer *packet_timer;
-    int64_t packet_interval_ns;
+    /* Frame transmission timer */
+    QEMUTimer *frame_timer;
+    int64_t frame_interval_ns;
 
     /* Descriptor ring state */
     uint64_t desc_ring_addr;    /* Physical address of descriptor ring */
@@ -302,17 +239,10 @@ typedef struct PhantomFPGAState {
     uint32_t desc_head;         /* Head - driver submits here */
     uint32_t desc_tail;         /* Tail - device completes here */
 
-    /* Packet configuration */
-    uint32_t pkt_size_mode;     /* 0 = fixed, 1 = variable */
-    uint32_t pkt_size;          /* Size in 64-bit words (or min for variable) */
-    uint32_t pkt_size_max;      /* Max size for variable mode */
-    uint32_t header_profile;    /* 0 = simple, 1 = standard, 2 = full */
-    uint32_t packet_rate;       /* Packets per second */
-
-    /* Packet generation state */
-    uint32_t sequence;          /* Next sequence number */
-    uint64_t mono_counter;      /* Monotonic counter (never resets) */
-    uint32_t prng_state;        /* PRNG state for payload generation */
+    /* Frame configuration */
+    uint32_t frame_rate;        /* Frames per second */
+    uint32_t current_frame;     /* Current frame index (0-249) */
+    uint32_t sequence;          /* Sequence number for transmitted frames */
 
     /* Control and status */
     uint32_t ctrl;              /* Control register value */
@@ -326,14 +256,15 @@ typedef struct PhantomFPGAState {
     int64_t irq_last_time_ns;   /* Last IRQ timestamp */
 
     /* Statistics counters */
-    uint32_t stat_packets;      /* Total packets produced */
+    uint32_t stat_frames_tx;    /* Frames transmitted */
+    uint32_t stat_frames_drop;  /* Frames dropped (backpressure) */
     uint64_t stat_bytes;        /* Total bytes transferred */
     uint32_t stat_errors;       /* Total errors */
     uint32_t stat_desc_compl;   /* Descriptors completed */
 
     /* Fault injection */
     uint32_t fault_inject;      /* Fault injection flags */
-    uint32_t fault_rate;        /* Fault probability: ~1/N packets affected */
+    uint32_t fault_rate;        /* Fault probability: ~1/N frames affected */
     uint32_t fault_counter;     /* Internal counter for fault timing */
 
 } PhantomFPGAState;
@@ -360,22 +291,7 @@ static inline uint64_t phantomfpga_desc_addr(PhantomFPGAState *s, uint32_t idx)
     return s->desc_ring_addr + ((uint64_t)idx * PHANTOMFPGA_DESC_SIZE);
 }
 
-/* Calculate packet size in bytes for current configuration */
-static inline uint32_t phantomfpga_get_header_size(PhantomFPGAState *s)
-{
-    switch (s->header_profile) {
-    case PHANTOMFPGA_HDR_PROFILE_SIMPLE:
-        return PHANTOMFPGA_HDR_SIMPLE_SIZE;
-    case PHANTOMFPGA_HDR_PROFILE_STANDARD:
-        return PHANTOMFPGA_HDR_STANDARD_SIZE;
-    case PHANTOMFPGA_HDR_PROFILE_FULL:
-        return PHANTOMFPGA_HDR_FULL_SIZE;
-    default:
-        return PHANTOMFPGA_HDR_SIMPLE_SIZE;
-    }
-}
-
-/* Should a fault be triggered this packet? (probabilistic) */
+/* Should a fault be triggered this frame? (probabilistic) */
 static inline bool phantomfpga_should_fault(PhantomFPGAState *s)
 {
     if (s->fault_rate == 0) {

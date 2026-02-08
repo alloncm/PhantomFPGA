@@ -15,7 +15,7 @@ curve shaped like a brick wall. We'll help you climb it.
 Before starting, make sure you:
 
 1. Have read [architecture.md](architecture.md) for system overview
-2. Have read [register-reference.md](register-reference.md) for hardware interface
+2. Have read [phantomfpga-datasheet.md](phantomfpga-datasheet.md) for device operation and registers
 3. Have a working build environment (QEMU + guest VM)
 4. Understand basic C programming and Linux kernel concepts
 

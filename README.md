@@ -2,9 +2,11 @@
 
 > A fake FPGA that's more real than your excuses for not learning kernel development.
 
-**PhantomFPGA** is a training platform for learning Linux kernel driver development. It gives you a virtual PCIe device (running in QEMU) that behaves like a real streaming FPGA - complete with DMA, interrupts, ring buffers, and all the fun stuff that makes embedded developers lose sleep.
+**PhantomFPGA** is a training platform for learning Linux kernel driver development. It gives you a virtual PCIe device (running in QEMU) that behaves like a real streaming FPGA - complete with scatter-gather DMA, interrupts, descriptor rings, and all the fun stuff that makes embedded developers lose sleep.
 
 No expensive hardware needed. No magic smoke released. Just pure learning.
+
+And when you're done? Well. Let's just say the device is trying to tell you something. 250 somethings, actually. At 25 per second. What is it? You'll find out when your driver works.
 
 ```
     +------------------+
@@ -16,8 +18,16 @@ No expensive hardware needed. No magic smoke released. Just pure learning.
     +------------------+
            |
     +------------------+
-    |  PhantomFPGA     |  <-- Our fake FPGA (real enough to learn from)
+    |  PhantomFPGA     |  <-- Our fake FPGA (hiding something)
     |  (QEMU Device)   |
+    +------------------+
+           |
+    +------------------+
+    |  TCP Server      |  <-- Streams the mystery to the world
+    +------------------+
+           |
+    +------------------+
+    |  Terminal Viewer |  <-- The big reveal
     +------------------+
 ```
 
@@ -26,12 +36,13 @@ No expensive hardware needed. No magic smoke released. Just pure learning.
 You know how learning to drive is easier in a simulator before you crash a real car? Same idea here, but for kernel drivers.
 
 PhantomFPGA gives you:
-1. A virtual PCIe device that produces streaming data (like a real FPGA would)
+1. A virtual PCIe device that streams... something... via scatter-gather DMA
 2. A kernel driver skeleton with detailed TODOs showing you exactly what to implement
-3. A userspace app skeleton to consume the data
-4. A safe environment where crashing the kernel just means rebooting a VM
+3. A userspace server app to stream frames over TCP
+4. A viewer skeleton that displays... whatever it is
+5. A safe environment where crashing the kernel just means rebooting a VM
 
-The device simulates an FPGA that captures frames at configurable rates and DMAs them to a ring buffer in system memory. Your job is to write the driver that sets this up and the app that reads the frames.
+The device has 250 frames of data. Each frame is exactly 5120 bytes. They loop forever at 25 fps. What's in them? That's between you and your working driver.
 
 **Who is this for?**
 - Junior embedded developers who want to learn kernel programming
@@ -45,12 +56,12 @@ The device simulates an FPGA that captures frames at configurable rates and DMAs
 ## Features
 
 - **Virtual PCIe Device**: Full PCIe device model in QEMU with vendor ID 0x0DAD and device ID 0xF00D (because every project needs dad jokes in the PCI IDs)
-- **DMA Ring Buffer**: Real DMA transfers to guest memory, just like actual hardware
-- **MSI-X Interrupts**: Two vectors - one for "hey, you have data" and one for "oops, buffer overrun"
-- **Configurable Everything**: Frame size, rate, ring depth, watermark thresholds
-- **Fault Injection**: Make the device misbehave on purpose (great for testing your error handling)
+- **Scatter-Gather DMA**: Real descriptor-based DMA transfers, just like actual hardware
+- **MSI-X Interrupts**: Three vectors - one for "hey, data's ready", one for "oops", and one for "you're not keeping up"
+- **The Payload**: 250 frames, 5120 bytes each. Contents classified until you earn it.
+- **Fault Injection**: Corrupt CRCs, skip sequences, generally make life difficult (great for testing your error handling)
 - **Multi-Architecture**: Works on x86_64 and aarch64 (ARM64)
-- **Detailed Skeleton Code**: Driver and app with extensive TODO comments guiding you step by step
+- **Detailed Skeleton Code**: Driver and apps with extensive TODO comments guiding you step by step
 
 ## Quick Start
 
@@ -122,7 +133,7 @@ Let's verify the device is there:
 
 **Expected output:**
 ```
-name "phantomfpga", bus PCI, desc "PhantomFPGA SG-DMA Training Device v2.0"
+name "phantomfpga", bus PCI, desc "PhantomFPGA SG-DMA Training Device v3.0"
 ```
 
 If you see this - congratulations! You built a fake FPGA. Your parents would be... confused but probably supportive.
@@ -188,7 +199,7 @@ lspci -nn | grep -i 0dad
 
 **Expected output (slot may vary):**
 ```
-00:01.0 Unclassified device [00ff]: Device [0dad:f00d] (rev 02)
+00:01.0 Unclassified device [00ff]: Device [0dad:f00d] (rev 03)
 ```
 
 There it is! Device 0dad:f00d. That's our "DAD" serving "FOOD" in hex. I'm not sorry.
@@ -216,7 +227,7 @@ devmem 0x10040000 w
 0xF00DFACE
 ```
 
-`0xF00DFACE` - that's the device's way of saying hello. If you see this, your fake FPGA is alive and happy!
+`0xF00DFACE` - that's the device's way of saying hello. If you see this, your fake FPGA is alive and... holding its secrets until you write a proper driver for it.
 
 ## Now What? The Fun Part!
 
@@ -226,11 +237,17 @@ You've got the environment running. Now comes the actual learning:
    - Look for `/* TODO: ... */` comments - they tell you exactly what to implement
    - Follow the detailed guide in `docs/driver-guide.md`
 
-2. **Complete the app** in `app/phantomfpga_app.c`
+2. **Complete the server app** in `app/phantomfpga_app.c`
    - Same deal - find the TODOs, implement them
+   - This one streams frames over TCP to whoever wants them
 
-3. **Test your work**
-   - Load driver, run app, watch data flow, feel accomplished
+3. **Complete the viewer** in `viewer/phantomfpga_view.c`
+   - Connects to the server, displays... whatever it is
+   - The final piece of the puzzle
+
+4. **Test your work**
+   - Load driver, run server, connect viewer
+   - If you did everything right, you'll know
 
 ### Building the Driver
 
@@ -251,25 +268,35 @@ dmesg | tail -20
 
 You should see messages about the driver loading and finding the device.
 
-### Building the App
+### Building the Apps
 
 ```bash
 # On your host:
 cd app
 make
+
+cd ../viewer
+make
 ```
 
 ```bash
-# Inside the VM:
-/mnt/app/phantomfpga_app --help
+# Inside the VM - run the server:
+/mnt/app/phantomfpga_app --tcp-server
+
+# On your host - connect the viewer:
+./viewer/phantomfpga_view localhost 5000
 ```
+
+And then... well. You'll see what you'll see. Or you won't, if something's broken. The device knows what it wants to show you. Your job is to let it.
+
+(Hint: Make sure your terminal is at least 110 columns wide and 45 rows tall. Just trust me on this one.)
 
 ## Documentation
 
 Start here and work your way through:
 
 1. **[Architecture Overview](docs/architecture.md)** - Understand how all the pieces fit together
-2. **[Register Reference](docs/register-reference.md)** - The hardware interface you're programming against
+2. **[Device Datasheet](docs/phantomfpga-datasheet.md)** - How the device works and the complete register reference
 3. **[Driver Implementation Guide](docs/driver-guide.md)** - Step-by-step instructions for completing the driver
 
 ## Building for a Different Architecture
@@ -392,6 +419,16 @@ Just reboot the VM. Or rebuild everything:
 cd platform/buildroot && make clean && make
 ```
 
+### "The viewer shows garbage / nothing"
+
+A few things to check:
+- Is your terminal big enough? You need at least 110x45.
+- Did you implement the TODOs in the viewer? The skeleton doesn't display anything by itself.
+- Is the CRC validation working? Bad CRCs mean corrupt frames.
+- Are you keeping up? Check the `frames_dropped` counter.
+
+When it works, you'll know. It's not subtle.
+
 ## License
 
 MIT License - see [LICENSE](LICENSE) for the full text.
@@ -424,3 +461,7 @@ Have a better dad joke for the code comments? I'm genuinely interested.
 
 *"Chuck Norris can write kernel drivers in JavaScript. The kernel just accepts it."*
 *- Also me*
+
+---
+
+**P.S.** - The device magic number is `0xF00DFACE`. We're not very creative with magic numbers around here, but at least they're memorable. And delicious-sounding.

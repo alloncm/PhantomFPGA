@@ -1,12 +1,13 @@
 /*
- * PhantomFPGA QEMU PCIe Device Implementation - v2.0 Scatter-Gather Edition
+ * PhantomFPGA QEMU PCIe Device Implementation - v3.0 ASCII Animation Edition
  *
- * A virtual FPGA device for training scatter-gather DMA driver development.
- * Now featuring descriptor rings, CRC32 validation, and enough configuration
- * options to make your head spin (in a good way).
+ * A virtual FPGA device that streams pre-built ASCII animation frames.
+ * 250 frames at 25 fps = 10 seconds of looping cartoon goodness.
  *
- * "In the land of QEMU where the shadows lie,
- *  one descriptor ring to bind them all."
+ * The trainee's goal: build a driver, stream frames over TCP,
+ * and watch ASCII art come alive in the terminal.
+ *
+ * "Making DMA training actually fun since 2024."
  *
  * SPDX-License-Identifier: GPL-2.0-or-later
  */
@@ -25,6 +26,7 @@
 #include "system/dma.h"
 
 #include "phantomfpga.h"
+#include "frames_data.h"
 
 /* Debug macro - uncomment to enable verbose logging */
 /* #define PHANTOMFPGA_DEBUG */
@@ -42,9 +44,7 @@
 
 /* ------------------------------------------------------------------------ */
 /* CRC32 Implementation (IEEE 802.3 polynomial)                             */
-/*                                                                          */
-/* Because no self-respecting DMA device would ship without CRC support.    */
-/* And yes, we could use a library, but where's the fun in that?            */
+/* Used to update the timestamp and recompute CRC on frame transmission     */
 /* ------------------------------------------------------------------------ */
 
 static const uint32_t crc32_table[256] = {
@@ -105,56 +105,12 @@ static uint32_t crc32_compute(const uint8_t *data, size_t len)
 }
 
 /* ------------------------------------------------------------------------ */
-/* Simple PRNG for reproducible pseudo-random payload generation            */
-/* ------------------------------------------------------------------------ */
-
-/*
- * Xorshift32 - Fast, decent quality PRNG.
- * We use this for payload and variable size generation.
- */
-static uint32_t prng_xorshift32(uint32_t *state)
-{
-    uint32_t x = *state;
-    x ^= x << 13;
-    x ^= x >> 17;
-    x ^= x << 5;
-    *state = x;
-    return x;
-}
-
-/* ------------------------------------------------------------------------ */
 /* Forward Declarations                                                     */
 /* ------------------------------------------------------------------------ */
 
-static void phantomfpga_packet_timer_cb(void *opaque);
+static void phantomfpga_frame_timer_cb(void *opaque);
 static void phantomfpga_update_irq(PhantomFPGAState *s);
 static void phantomfpga_do_reset(PhantomFPGAState *s);
-
-/* ------------------------------------------------------------------------ */
-/* Packet Size Calculation                                                  */
-/* ------------------------------------------------------------------------ */
-
-/*
- * Calculate the packet size for the current packet.
- * In fixed mode, returns pkt_size * 8.
- * In variable mode, returns a random size in [pkt_size, pkt_size_max] * 8.
- */
-static uint32_t phantomfpga_calc_packet_size(PhantomFPGAState *s)
-{
-    uint32_t size_words;
-
-    if (s->pkt_size_mode == PHANTOMFPGA_PKT_SIZE_FIXED) {
-        size_words = s->pkt_size;
-    } else {
-        /* Variable mode: random size between min and max */
-        uint32_t range = s->pkt_size_max - s->pkt_size + 1;
-        uint32_t rand_val = prng_xorshift32(&s->prng_state);
-        size_words = s->pkt_size + (rand_val % range);
-    }
-
-    /* Convert to bytes (64-bit words -> bytes) */
-    return size_words * 8;
-}
 
 /* ------------------------------------------------------------------------ */
 /* Register Read Handler                                                    */
@@ -189,24 +145,20 @@ static uint64_t phantomfpga_mmio_read(void *opaque, hwaddr addr, unsigned size)
         val = s->status;
         break;
 
-    case PHANTOMFPGA_REG_PKT_SIZE_MODE:
-        val = s->pkt_size_mode;
+    case PHANTOMFPGA_REG_FRAME_SIZE:
+        val = PHANTOMFPGA_FRAME_SIZE;
         break;
 
-    case PHANTOMFPGA_REG_PKT_SIZE:
-        val = s->pkt_size;
+    case PHANTOMFPGA_REG_FRAME_COUNT:
+        val = PHANTOMFPGA_FRAME_COUNT;
         break;
 
-    case PHANTOMFPGA_REG_PKT_SIZE_MAX:
-        val = s->pkt_size_max;
+    case PHANTOMFPGA_REG_FRAME_RATE:
+        val = s->frame_rate;
         break;
 
-    case PHANTOMFPGA_REG_HEADER_PROFILE:
-        val = s->header_profile;
-        break;
-
-    case PHANTOMFPGA_REG_PACKET_RATE:
-        val = s->packet_rate;
+    case PHANTOMFPGA_REG_CURRENT_FRAME:
+        val = s->current_frame;
         break;
 
     case PHANTOMFPGA_REG_DESC_RING_LO:
@@ -241,8 +193,12 @@ static uint64_t phantomfpga_mmio_read(void *opaque, hwaddr addr, unsigned size)
         val = s->irq_coalesce;
         break;
 
-    case PHANTOMFPGA_REG_STAT_PACKETS:
-        val = s->stat_packets;
+    case PHANTOMFPGA_REG_STAT_FRAMES_TX:
+        val = s->stat_frames_tx;
+        break;
+
+    case PHANTOMFPGA_REG_STAT_FRAMES_DROP:
+        val = s->stat_frames_drop;
         break;
 
     case PHANTOMFPGA_REG_STAT_BYTES_LO:
@@ -253,12 +209,12 @@ static uint64_t phantomfpga_mmio_read(void *opaque, hwaddr addr, unsigned size)
         val = (uint32_t)(s->stat_bytes >> 32);
         break;
 
-    case PHANTOMFPGA_REG_STAT_ERRORS:
-        val = s->stat_errors;
-        break;
-
     case PHANTOMFPGA_REG_STAT_DESC_COMPL:
         val = s->stat_desc_compl;
+        break;
+
+    case PHANTOMFPGA_REG_STAT_ERRORS:
+        val = s->stat_errors;
         break;
 
     case PHANTOMFPGA_REG_FAULT_INJECT:
@@ -306,12 +262,16 @@ static void phantomfpga_mmio_write(void *opaque, hwaddr addr,
     case PHANTOMFPGA_REG_DEV_ID:
     case PHANTOMFPGA_REG_DEV_VER:
     case PHANTOMFPGA_REG_STATUS:
+    case PHANTOMFPGA_REG_FRAME_SIZE:
+    case PHANTOMFPGA_REG_FRAME_COUNT:
+    case PHANTOMFPGA_REG_CURRENT_FRAME:
     case PHANTOMFPGA_REG_DESC_TAIL:
-    case PHANTOMFPGA_REG_STAT_PACKETS:
+    case PHANTOMFPGA_REG_STAT_FRAMES_TX:
+    case PHANTOMFPGA_REG_STAT_FRAMES_DROP:
     case PHANTOMFPGA_REG_STAT_BYTES_LO:
     case PHANTOMFPGA_REG_STAT_BYTES_HI:
-    case PHANTOMFPGA_REG_STAT_ERRORS:
     case PHANTOMFPGA_REG_STAT_DESC_COMPL:
+    case PHANTOMFPGA_REG_STAT_ERRORS:
         DPRINTF("write to read-only register 0x%lx ignored\n",
                 (unsigned long)addr);
         break;
@@ -331,76 +291,42 @@ static void phantomfpga_mmio_write(void *opaque, hwaddr addr,
 
         /* Handle RUN transition */
         if ((s->ctrl & PHANTOMFPGA_CTRL_RUN) && !was_running) {
-            /* Starting packet production */
-            DPRINTF("starting packet production at %u Hz\n", s->packet_rate);
+            /* Starting frame transmission */
+            DPRINTF("starting frame transmission at %u fps\n", s->frame_rate);
             s->status |= PHANTOMFPGA_STATUS_RUNNING;
             s->status &= ~PHANTOMFPGA_STATUS_DESC_EMPTY;
 
-            /* Calculate packet interval and start timer */
-            if (s->packet_rate > 0) {
-                s->packet_interval_ns = NANOSECONDS_PER_SECOND / s->packet_rate;
+            /* Calculate frame interval and start timer */
+            if (s->frame_rate > 0) {
+                s->frame_interval_ns = NANOSECONDS_PER_SECOND / s->frame_rate;
             } else {
-                s->packet_interval_ns = NANOSECONDS_PER_SECOND;  /* 1 Hz fallback */
+                s->frame_interval_ns = NANOSECONDS_PER_SECOND;  /* 1 fps fallback */
             }
 
-            timer_mod(s->packet_timer,
+            timer_mod(s->frame_timer,
                       qemu_clock_get_ns(QEMU_CLOCK_VIRTUAL) +
-                      s->packet_interval_ns);
+                      s->frame_interval_ns);
         } else if (!(s->ctrl & PHANTOMFPGA_CTRL_RUN) && was_running) {
-            /* Stopping packet production */
-            DPRINTF("stopping packet production\n");
-            timer_del(s->packet_timer);
+            /* Stopping frame transmission */
+            DPRINTF("stopping frame transmission\n");
+            timer_del(s->frame_timer);
             s->status &= ~PHANTOMFPGA_STATUS_RUNNING;
         }
         break;
 
-    case PHANTOMFPGA_REG_PKT_SIZE_MODE:
-        s->pkt_size_mode = val32 & 0x1;  /* Only bit 0 matters */
-        break;
-
-    case PHANTOMFPGA_REG_PKT_SIZE:
-        if (val32 < PHANTOMFPGA_MIN_PKT_SIZE) {
-            val32 = PHANTOMFPGA_MIN_PKT_SIZE;
-            WARN("pkt_size clamped to minimum %u\n", val32);
-        } else if (val32 > PHANTOMFPGA_MAX_PKT_SIZE) {
-            val32 = PHANTOMFPGA_MAX_PKT_SIZE;
-            WARN("pkt_size clamped to maximum %u\n", val32);
+    case PHANTOMFPGA_REG_FRAME_RATE:
+        if (val32 < PHANTOMFPGA_MIN_FRAME_RATE) {
+            val32 = PHANTOMFPGA_MIN_FRAME_RATE;
+            WARN("frame_rate clamped to minimum %u\n", val32);
+        } else if (val32 > PHANTOMFPGA_MAX_FRAME_RATE) {
+            val32 = PHANTOMFPGA_MAX_FRAME_RATE;
+            WARN("frame_rate clamped to maximum %u\n", val32);
         }
-        s->pkt_size = val32;
-        break;
-
-    case PHANTOMFPGA_REG_PKT_SIZE_MAX:
-        if (val32 < PHANTOMFPGA_MIN_PKT_SIZE) {
-            val32 = PHANTOMFPGA_MIN_PKT_SIZE;
-            WARN("pkt_size_max clamped to minimum %u\n", val32);
-        } else if (val32 > PHANTOMFPGA_MAX_PKT_SIZE) {
-            val32 = PHANTOMFPGA_MAX_PKT_SIZE;
-            WARN("pkt_size_max clamped to maximum %u\n", val32);
-        }
-        s->pkt_size_max = val32;
-        break;
-
-    case PHANTOMFPGA_REG_HEADER_PROFILE:
-        if (val32 > PHANTOMFPGA_HDR_PROFILE_FULL) {
-            val32 = PHANTOMFPGA_HDR_PROFILE_SIMPLE;
-            WARN("header_profile invalid, defaulting to simple\n");
-        }
-        s->header_profile = val32;
-        break;
-
-    case PHANTOMFPGA_REG_PACKET_RATE:
-        if (val32 < PHANTOMFPGA_MIN_PKT_RATE) {
-            val32 = PHANTOMFPGA_MIN_PKT_RATE;
-            WARN("packet_rate clamped to minimum %u\n", val32);
-        } else if (val32 > PHANTOMFPGA_MAX_PKT_RATE) {
-            val32 = PHANTOMFPGA_MAX_PKT_RATE;
-            WARN("packet_rate clamped to maximum %u\n", val32);
-        }
-        s->packet_rate = val32;
+        s->frame_rate = val32;
 
         /* Update timer interval if running */
         if (s->status & PHANTOMFPGA_STATUS_RUNNING) {
-            s->packet_interval_ns = NANOSECONDS_PER_SECOND / s->packet_rate;
+            s->frame_interval_ns = NANOSECONDS_PER_SECOND / s->frame_rate;
         }
         break;
 
@@ -501,14 +427,6 @@ static void phantomfpga_fire_irq(PhantomFPGAState *s, int vector)
 {
     PCIDevice *pci_dev = PCI_DEVICE(s);
 
-    /* Check for fault injection: delay IRQ */
-    if (s->fault_inject & PHANTOMFPGA_FAULT_DELAY_IRQ) {
-        if (phantomfpga_should_fault(s)) {
-            DPRINTF("suppressing IRQ vector %d (fault injection)\n", vector);
-            return;
-        }
-    }
-
     if (s->msix_enabled && msix_enabled(pci_dev)) {
         DPRINTF("firing MSI-X vector %d\n", vector);
         msix_notify(pci_dev, vector);
@@ -576,118 +494,25 @@ static bool phantomfpga_check_irq_coalesce(PhantomFPGAState *s)
 }
 
 /* ------------------------------------------------------------------------ */
-/* Packet Production - The Main Event                                       */
+/* Frame Transmission - The Main Event                                      */
 /* ------------------------------------------------------------------------ */
 
 /*
- * Build the packet header based on the selected profile.
- * Returns the header size in bytes.
+ * Transmit a single frame to the next available descriptor buffer.
  */
-static uint32_t phantomfpga_build_header(PhantomFPGAState *s,
-                                          uint8_t *buf,
-                                          uint32_t packet_size,
-                                          uint32_t payload_size,
-                                          uint32_t payload_crc,
-                                          bool corrupt_hdr_crc)
-{
-    uint64_t timestamp = qemu_clock_get_ns(QEMU_CLOCK_VIRTUAL);
-    uint32_t header_size;
-    uint32_t hdr_crc;
-
-    switch (s->header_profile) {
-    case PHANTOMFPGA_HDR_PROFILE_SIMPLE:
-        {
-            PhantomFPGAHdrSimple *hdr = (PhantomFPGAHdrSimple *)buf;
-            hdr->magic = PHANTOMFPGA_PACKET_MAGIC;
-            hdr->sequence = s->sequence;
-            hdr->size = packet_size;
-            hdr->reserved = 0;
-            header_size = sizeof(PhantomFPGAHdrSimple);
-        }
-        break;
-
-    case PHANTOMFPGA_HDR_PROFILE_STANDARD:
-        {
-            PhantomFPGAHdrStandard *hdr = (PhantomFPGAHdrStandard *)buf;
-            hdr->magic = PHANTOMFPGA_PACKET_MAGIC;
-            hdr->sequence = s->sequence;
-            hdr->timestamp = timestamp;
-            hdr->size = packet_size;
-            hdr->counter = (uint32_t)s->mono_counter;
-            hdr->reserved = 0;
-
-            /* Calculate CRC over first 24 bytes (0x00-0x17) */
-            hdr_crc = crc32_compute(buf, 24);
-            if (corrupt_hdr_crc) {
-                hdr_crc ^= 0xDEADBEEF;  /* Corrupt it! */
-            }
-            hdr->hdr_crc32 = hdr_crc;
-
-            header_size = sizeof(PhantomFPGAHdrStandard);
-        }
-        break;
-
-    case PHANTOMFPGA_HDR_PROFILE_FULL:
-        {
-            PhantomFPGAHdrFull *hdr = (PhantomFPGAHdrFull *)buf;
-            hdr->magic = PHANTOMFPGA_PACKET_MAGIC;
-            hdr->version = PHANTOMFPGA_DEV_VER;
-            hdr->sequence = s->sequence;
-            hdr->flags = 0;
-            hdr->timestamp = timestamp;
-            hdr->mono_counter = s->mono_counter;
-            hdr->size = packet_size;
-            hdr->payload_size = payload_size;
-            hdr->channel = 0;
-            hdr->reserved = 0;
-
-            /* Calculate CRC over first 40 bytes (0x00-0x27) */
-            hdr_crc = crc32_compute(buf, 40);
-            if (corrupt_hdr_crc) {
-                hdr_crc ^= 0xDEADBEEF;
-            }
-            hdr->hdr_crc32 = hdr_crc;
-
-            /* Payload CRC (may also be corrupted) */
-            hdr->payload_crc32 = payload_crc;
-
-            header_size = sizeof(PhantomFPGAHdrFull);
-        }
-        break;
-
-    default:
-        /* Shouldn't happen, but default to simple */
-        {
-            PhantomFPGAHdrSimple *hdr = (PhantomFPGAHdrSimple *)buf;
-            hdr->magic = PHANTOMFPGA_PACKET_MAGIC;
-            hdr->sequence = s->sequence;
-            hdr->size = packet_size;
-            hdr->reserved = 0;
-            header_size = sizeof(PhantomFPGAHdrSimple);
-        }
-        break;
-    }
-
-    return header_size;
-}
-
-/*
- * Produce a single packet using the next available descriptor.
- */
-static void phantomfpga_produce_packet(PhantomFPGAState *s)
+static void phantomfpga_transmit_frame(PhantomFPGAState *s)
 {
     PCIDevice *pci_dev = PCI_DEVICE(s);
     PhantomFPGASGDesc desc;
     PhantomFPGACompletion compl;
     uint64_t desc_addr;
-    uint32_t packet_size, header_size, payload_size;
-    uint8_t *packet_buf;
-    uint8_t *payload_ptr;
-    uint32_t payload_crc = 0;
+    uint8_t frame_buf[PHANTOMFPGA_FRAME_SIZE];
+    const uint8_t *src_frame;
+    uint64_t timestamp;
+    uint32_t crc;
     bool do_fault = phantomfpga_should_fault(s);
-    bool corrupt_hdr_crc = false;
-    bool corrupt_pay_crc = false;
-    bool corrupt_payload = false;
+    bool corrupt_crc = false;
+    bool corrupt_data = false;
     bool skip_sequence = false;
     int ret;
 
@@ -696,37 +521,38 @@ static void phantomfpga_produce_packet(PhantomFPGAState *s)
         return;
     }
 
-    /* Check for fault injection: random packet drop */
-    if ((s->fault_inject & PHANTOMFPGA_FAULT_DROP_PACKET) && do_fault) {
-        DPRINTF("dropping packet %u (fault injection)\n", s->sequence);
-        s->sequence++;  /* Still increment sequence to show gap */
-        s->mono_counter++;
+    /* Check for fault injection: drop frame */
+    if ((s->fault_inject & PHANTOMFPGA_FAULT_DROP_FRAME) && do_fault) {
+        DPRINTF("dropping frame %u (fault injection)\n", s->current_frame);
+        s->stat_frames_drop++;
+        /* Advance to next frame anyway */
+        s->current_frame = (s->current_frame + 1) % PHANTOMFPGA_FRAME_COUNT;
+        s->sequence++;
         return;
     }
 
-    /* Check for fault injection: corrupt sequence */
-    if ((s->fault_inject & PHANTOMFPGA_FAULT_CORRUPT_SEQUENCE) && do_fault) {
+    /* Check other fault flags */
+    if ((s->fault_inject & PHANTOMFPGA_FAULT_CORRUPT_CRC) && do_fault) {
+        corrupt_crc = true;
+    }
+    if ((s->fault_inject & PHANTOMFPGA_FAULT_CORRUPT_DATA) && do_fault) {
+        corrupt_data = true;
+    }
+    if ((s->fault_inject & PHANTOMFPGA_FAULT_SKIP_SEQUENCE) && do_fault) {
         skip_sequence = true;
-    }
-
-    /* Check for fault injection: CRC corruption */
-    if ((s->fault_inject & PHANTOMFPGA_FAULT_CORRUPT_HDR_CRC) && do_fault) {
-        corrupt_hdr_crc = true;
-    }
-    if ((s->fault_inject & PHANTOMFPGA_FAULT_CORRUPT_PAY_CRC) && do_fault) {
-        corrupt_pay_crc = true;
-    }
-    if ((s->fault_inject & PHANTOMFPGA_FAULT_CORRUPT_PAYLOAD) && do_fault) {
-        corrupt_payload = true;
     }
 
     /* Check if descriptors are available */
     if (!phantomfpga_has_descriptors(s)) {
+        /* Backpressure: drop frame, increment counter, don't stall */
         s->status |= PHANTOMFPGA_STATUS_DESC_EMPTY;
         s->irq_status |= PHANTOMFPGA_IRQ_NO_DESC;
-        DPRINTF("no descriptors available (head=%u tail=%u)\n",
-                s->desc_head, s->desc_tail);
+        s->stat_frames_drop++;
+        DPRINTF("no descriptors available, dropping frame %u (head=%u tail=%u)\n",
+                s->current_frame, s->desc_head, s->desc_tail);
         phantomfpga_update_irq(s);
+        /* Advance to next frame anyway (don't stall animation) */
+        s->current_frame = (s->current_frame + 1) % PHANTOMFPGA_FRAME_COUNT;
         return;
     }
 
@@ -748,14 +574,11 @@ static void phantomfpga_produce_packet(PhantomFPGAState *s)
         return;
     }
 
-    /* Calculate packet size */
-    packet_size = phantomfpga_calc_packet_size(s);
-    header_size = phantomfpga_get_header_size(s);
-
     /* Validate buffer is large enough */
-    if (desc.length < packet_size + PHANTOMFPGA_COMPL_SIZE) {
+    if (desc.length < PHANTOMFPGA_FRAME_SIZE + PHANTOMFPGA_COMPL_SIZE) {
         WARN("descriptor buffer too small: %u < %u + %lu\n",
-             desc.length, packet_size, (unsigned long)PHANTOMFPGA_COMPL_SIZE);
+             desc.length, PHANTOMFPGA_FRAME_SIZE,
+             (unsigned long)PHANTOMFPGA_COMPL_SIZE);
         s->stat_errors++;
         s->status |= PHANTOMFPGA_STATUS_ERROR;
 
@@ -768,52 +591,40 @@ static void phantomfpga_produce_packet(PhantomFPGAState *s)
         goto complete_desc;
     }
 
-    /* Allocate temporary packet buffer */
-    payload_size = packet_size - header_size;
-    packet_buf = g_malloc(packet_size);
-    payload_ptr = packet_buf + header_size;
+    /* Get source frame from pre-built data */
+    src_frame = &phantomfpga_frames[s->current_frame * PHANTOMFPGA_FRAME_SIZE];
 
-    /* Generate pseudo-random payload using sequence-based seed */
-    {
-        uint32_t prng = s->sequence ^ 0xDEADBEEF;
-        for (uint32_t i = 0; i < payload_size; i += 4) {
-            uint32_t rnd = prng_xorshift32(&prng);
-            uint32_t remaining = payload_size - i;
-            if (remaining >= 4) {
-                memcpy(payload_ptr + i, &rnd, 4);
-            } else {
-                memcpy(payload_ptr + i, &rnd, remaining);
-            }
-        }
+    /* Copy frame to local buffer so we can modify header */
+    memcpy(frame_buf, src_frame, PHANTOMFPGA_FRAME_SIZE);
+
+    /* Update timestamp in header */
+    timestamp = qemu_clock_get_ns(QEMU_CLOCK_VIRTUAL);
+    memcpy(&frame_buf[8], &timestamp, 8);  /* Offset 8 is timestamp field */
+
+    /* Update sequence number to our running counter */
+    memcpy(&frame_buf[4], &s->sequence, 4);  /* Offset 4 is sequence field */
+
+    /* Apply data corruption if requested */
+    if (corrupt_data) {
+        /* Corrupt some bytes in the ASCII data area */
+        frame_buf[100] ^= 0xFF;
+        frame_buf[200] ^= 0xAA;
+        DPRINTF("corrupted frame data (fault injection)\n");
     }
 
-    /* Apply payload corruption if needed */
-    if (corrupt_payload && payload_size >= 64) {
-        payload_ptr[payload_size / 2] ^= 0xFF;
-        payload_ptr[payload_size / 2 + 1] ^= 0xAA;
-        DPRINTF("corrupted payload at offset %u (fault injection)\n",
-                payload_size / 2);
+    /* Recompute CRC (bytes 0x0000-0x13FB, then store at 0x13FC) */
+    crc = crc32_compute(frame_buf, PHANTOMFPGA_FRAME_SIZE - 4);
+    if (corrupt_crc) {
+        crc ^= 0xDEADBEEF;
+        DPRINTF("corrupted CRC (fault injection)\n");
     }
+    memcpy(&frame_buf[PHANTOMFPGA_FRAME_SIZE - 4], &crc, 4);
 
-    /* Calculate payload CRC (for profiles that use it) */
-    if (s->header_profile >= PHANTOMFPGA_HDR_PROFILE_FULL) {
-        payload_crc = crc32_compute(payload_ptr, payload_size);
-        if (corrupt_pay_crc) {
-            payload_crc ^= 0xCAFEBABE;
-            DPRINTF("corrupted payload CRC (fault injection)\n");
-        }
-    }
-
-    /* Build header */
-    phantomfpga_build_header(s, packet_buf, packet_size, payload_size,
-                             payload_crc, corrupt_hdr_crc);
-
-    /* Write packet data via DMA */
-    ret = pci_dma_write(pci_dev, desc.dst_addr, packet_buf, packet_size);
-    g_free(packet_buf);
+    /* Write frame data via DMA */
+    ret = pci_dma_write(pci_dev, desc.dst_addr, frame_buf, PHANTOMFPGA_FRAME_SIZE);
 
     if (ret != 0) {
-        WARN("DMA write failed for packet at 0x%lx\n",
+        WARN("DMA write failed for frame at 0x%lx\n",
              (unsigned long)desc.dst_addr);
         s->stat_errors++;
         s->status |= PHANTOMFPGA_STATUS_ERROR;
@@ -822,10 +633,10 @@ static void phantomfpga_produce_packet(PhantomFPGAState *s)
         compl.actual_length = 0;
     } else {
         compl.status = PHANTOMFPGA_COMPL_STATUS_OK;
-        compl.actual_length = packet_size;
+        compl.actual_length = PHANTOMFPGA_FRAME_SIZE;
 
-        DPRINTF("produced packet seq=%u size=%u at addr=0x%lx\n",
-                s->sequence, packet_size, (unsigned long)desc.dst_addr);
+        DPRINTF("transmitted frame seq=%u (anim=%u) to addr=0x%lx\n",
+                s->sequence, s->current_frame, (unsigned long)desc.dst_addr);
     }
 
     /* Write completion structure at end of buffer */
@@ -834,8 +645,8 @@ static void phantomfpga_produce_packet(PhantomFPGAState *s)
                  &compl, sizeof(compl));
 
     /* Update statistics */
-    s->stat_packets++;
-    s->stat_bytes += packet_size;
+    s->stat_frames_tx++;
+    s->stat_bytes += PHANTOMFPGA_FRAME_SIZE;
 
 complete_desc:
     /* Mark descriptor as completed */
@@ -847,13 +658,15 @@ complete_desc:
     s->desc_tail = (s->desc_tail + 1) & (s->desc_ring_size - 1);
     s->stat_desc_compl++;
 
+    /* Advance to next animation frame (loops) */
+    s->current_frame = (s->current_frame + 1) % PHANTOMFPGA_FRAME_COUNT;
+
     /* Update sequence number */
     if (skip_sequence) {
         s->sequence += 2;  /* Skip one to create a gap */
     } else {
         s->sequence++;
     }
-    s->mono_counter++;
 
     /* Handle interrupt coalescing and delivery */
     if (phantomfpga_check_irq_coalesce(s)) {
@@ -863,26 +676,26 @@ complete_desc:
 
     /* Check for stop flag on descriptor */
     if (desc.control & PHANTOMFPGA_DESC_CTRL_STOP) {
-        DPRINTF("stop flag on descriptor, stopping production\n");
+        DPRINTF("stop flag on descriptor, stopping transmission\n");
         s->ctrl &= ~PHANTOMFPGA_CTRL_RUN;
         s->status &= ~PHANTOMFPGA_STATUS_RUNNING;
-        timer_del(s->packet_timer);
+        timer_del(s->frame_timer);
     }
 }
 
-/* Packet timer callback */
-static void phantomfpga_packet_timer_cb(void *opaque)
+/* Frame timer callback */
+static void phantomfpga_frame_timer_cb(void *opaque)
 {
     PhantomFPGAState *s = PHANTOMFPGA(opaque);
 
-    /* Produce a packet */
-    phantomfpga_produce_packet(s);
+    /* Transmit a frame */
+    phantomfpga_transmit_frame(s);
 
     /* Reschedule timer if still running */
     if (s->status & PHANTOMFPGA_STATUS_RUNNING) {
-        timer_mod(s->packet_timer,
+        timer_mod(s->frame_timer,
                   qemu_clock_get_ns(QEMU_CLOCK_VIRTUAL) +
-                  s->packet_interval_ns);
+                  s->frame_interval_ns);
     }
 }
 
@@ -894,8 +707,8 @@ static void phantomfpga_do_reset(PhantomFPGAState *s)
 {
     DPRINTF("resetting device state\n");
 
-    /* Stop packet timer */
-    timer_del(s->packet_timer);
+    /* Stop frame timer */
+    timer_del(s->frame_timer);
 
     /* Reset control and status */
     s->ctrl = 0;
@@ -911,25 +724,19 @@ static void phantomfpga_do_reset(PhantomFPGAState *s)
     s->desc_head = 0;
     s->desc_tail = 0;
 
-    /* Reset packet configuration to defaults */
-    s->pkt_size_mode = PHANTOMFPGA_PKT_SIZE_FIXED;
-    s->pkt_size = PHANTOMFPGA_DEFAULT_PKT_SIZE;
-    s->pkt_size_max = PHANTOMFPGA_DEFAULT_PKT_SIZE_MAX;
-    s->header_profile = PHANTOMFPGA_HDR_PROFILE_SIMPLE;
-    s->packet_rate = PHANTOMFPGA_DEFAULT_PKT_RATE;
-    s->packet_interval_ns = NANOSECONDS_PER_SECOND / s->packet_rate;
-
-    /* Reset packet generation state */
+    /* Reset frame configuration */
+    s->frame_rate = PHANTOMFPGA_DEFAULT_FRAME_RATE;
+    s->frame_interval_ns = NANOSECONDS_PER_SECOND / s->frame_rate;
+    s->current_frame = 0;
     s->sequence = 0;
-    /* Note: mono_counter intentionally NOT reset - it's monotonic! */
-    s->prng_state = 0x12345678;
 
     /* Reset IRQ coalescing state */
     s->irq_pending_count = 0;
     s->irq_last_time_ns = 0;
 
     /* Reset statistics */
-    s->stat_packets = 0;
+    s->stat_frames_tx = 0;
+    s->stat_frames_drop = 0;
     s->stat_bytes = 0;
     s->stat_errors = 0;
     s->stat_desc_compl = 0;
@@ -949,8 +756,6 @@ static void phantomfpga_reset_hold(Object *obj, ResetType type)
     (void)type;
 
     phantomfpga_do_reset(s);
-    /* Full reset also clears the mono counter */
-    s->mono_counter = 0;
 }
 
 /* ------------------------------------------------------------------------ */
@@ -962,7 +767,7 @@ static void phantomfpga_realize(PCIDevice *pci_dev, Error **errp)
     PhantomFPGAState *s = PHANTOMFPGA(pci_dev);
     int ret;
 
-    DPRINTF("realizing device (v2.0 SG-DMA edition)\n");
+    DPRINTF("realizing device (v3.0 ASCII Animation edition)\n");
 
     /* Initialize BAR0 for MMIO registers */
     memory_region_init_io(&s->bar0, OBJECT(s), &phantomfpga_mmio_ops, s,
@@ -984,22 +789,19 @@ static void phantomfpga_realize(PCIDevice *pci_dev, Error **errp)
         DPRINTF("MSI-X initialized with %d vectors\n", PHANTOMFPGA_MSIX_VECTORS);
     }
 
-    /* Create packet production timer */
-    s->packet_timer = timer_new_ns(QEMU_CLOCK_VIRTUAL,
-                                   phantomfpga_packet_timer_cb, s);
+    /* Create frame transmission timer */
+    s->frame_timer = timer_new_ns(QEMU_CLOCK_VIRTUAL,
+                                   phantomfpga_frame_timer_cb, s);
 
     /* Set default values */
-    s->pkt_size_mode = PHANTOMFPGA_PKT_SIZE_FIXED;
-    s->pkt_size = PHANTOMFPGA_DEFAULT_PKT_SIZE;
-    s->pkt_size_max = PHANTOMFPGA_DEFAULT_PKT_SIZE_MAX;
-    s->header_profile = PHANTOMFPGA_HDR_PROFILE_SIMPLE;
-    s->packet_rate = PHANTOMFPGA_DEFAULT_PKT_RATE;
-    s->packet_interval_ns = NANOSECONDS_PER_SECOND / s->packet_rate;
+    s->frame_rate = PHANTOMFPGA_DEFAULT_FRAME_RATE;
+    s->frame_interval_ns = NANOSECONDS_PER_SECOND / s->frame_rate;
     s->desc_ring_size = PHANTOMFPGA_DEFAULT_DESC_COUNT;
     s->irq_coalesce = (PHANTOMFPGA_DEFAULT_IRQ_COUNT) |
                       (PHANTOMFPGA_DEFAULT_IRQ_TIMEOUT << 16);
     s->fault_rate = PHANTOMFPGA_DEFAULT_FAULT_RATE;
-    s->prng_state = 0x12345678;
+    s->current_frame = 0;
+    s->sequence = 0;
 }
 
 static void phantomfpga_exit(PCIDevice *pci_dev)
@@ -1009,8 +811,8 @@ static void phantomfpga_exit(PCIDevice *pci_dev)
     DPRINTF("unrealizing device\n");
 
     /* Stop and free timer */
-    timer_del(s->packet_timer);
-    timer_free(s->packet_timer);
+    timer_del(s->frame_timer);
+    timer_free(s->frame_timer);
 
     /* Cleanup MSI-X if initialized */
     if (s->msix_enabled) {
@@ -1024,8 +826,8 @@ static void phantomfpga_exit(PCIDevice *pci_dev)
 
 static const VMStateDescription vmstate_phantomfpga = {
     .name = "phantomfpga",
-    .version_id = 2,  /* Bumped for v2.0 */
-    .minimum_version_id = 2,
+    .version_id = 3,  /* Bumped for v3.0 */
+    .minimum_version_id = 3,
     .fields = (const VMStateField[]) {
         /* Descriptor ring state */
         VMSTATE_UINT64(desc_ring_addr, PhantomFPGAState),
@@ -1033,18 +835,11 @@ static const VMStateDescription vmstate_phantomfpga = {
         VMSTATE_UINT32(desc_head, PhantomFPGAState),
         VMSTATE_UINT32(desc_tail, PhantomFPGAState),
 
-        /* Packet configuration */
-        VMSTATE_UINT32(pkt_size_mode, PhantomFPGAState),
-        VMSTATE_UINT32(pkt_size, PhantomFPGAState),
-        VMSTATE_UINT32(pkt_size_max, PhantomFPGAState),
-        VMSTATE_UINT32(header_profile, PhantomFPGAState),
-        VMSTATE_UINT32(packet_rate, PhantomFPGAState),
-
-        /* Packet generation state */
+        /* Frame configuration */
+        VMSTATE_UINT32(frame_rate, PhantomFPGAState),
+        VMSTATE_UINT32(current_frame, PhantomFPGAState),
         VMSTATE_UINT32(sequence, PhantomFPGAState),
-        VMSTATE_UINT64(mono_counter, PhantomFPGAState),
-        VMSTATE_UINT32(prng_state, PhantomFPGAState),
-        VMSTATE_INT64(packet_interval_ns, PhantomFPGAState),
+        VMSTATE_INT64(frame_interval_ns, PhantomFPGAState),
 
         /* Control and status */
         VMSTATE_UINT32(ctrl, PhantomFPGAState),
@@ -1058,7 +853,8 @@ static const VMStateDescription vmstate_phantomfpga = {
         VMSTATE_INT64(irq_last_time_ns, PhantomFPGAState),
 
         /* Statistics */
-        VMSTATE_UINT32(stat_packets, PhantomFPGAState),
+        VMSTATE_UINT32(stat_frames_tx, PhantomFPGAState),
+        VMSTATE_UINT32(stat_frames_drop, PhantomFPGAState),
         VMSTATE_UINT64(stat_bytes, PhantomFPGAState),
         VMSTATE_UINT32(stat_errors, PhantomFPGAState),
         VMSTATE_UINT32(stat_desc_compl, PhantomFPGAState),
@@ -1091,7 +887,7 @@ static void phantomfpga_class_init(ObjectClass *klass, const void *data)
     k->revision = PHANTOMFPGA_REVISION;
     k->class_id = PCI_CLASS_OTHERS;  /* 0xFF0000 */
 
-    dc->desc = "PhantomFPGA SG-DMA Training Device v2.0";
+    dc->desc = "PhantomFPGA ASCII Animation Streaming Device v3.0";
     dc->vmsd = &vmstate_phantomfpga;
 
     /* Use modern Resettable interface (QEMU 10.x+) */
