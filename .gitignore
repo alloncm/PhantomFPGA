@@ -1,5 +1,8 @@
 # PhantomFPGA .gitignore
 
+# Generic build directories (CMake, Meson, etc.)
+**/build/
+
 # Built images and artifacts
 platform/images/
 *.img
@@ -30,6 +33,7 @@ driver/.tmp_versions/
 
 # Application build artifacts
 app/phantomfpga_app
+viewer/phantomfpga_view
 
 # Test artifacts
 tests/unit/*.o

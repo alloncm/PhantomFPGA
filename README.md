@@ -2,33 +2,46 @@
 
 > A fake FPGA that's more real than your excuses for not learning kernel development.
 
+> [!TIP]
+> Reading this as raw text? You're missing out on the pretty formatting. Open this file in a markdown viewer - GitHub renders it nicely, or use VSCode's preview (Ctrl+Shift+V on Linux/Windows, Cmd+Shift+V on Mac). Your eyes will thank you.
+
 **PhantomFPGA** is a training platform for learning Linux kernel driver development. It gives you a virtual PCIe device (running in QEMU) that behaves like a real streaming FPGA - complete with scatter-gather DMA, interrupts, descriptor rings, and all the fun stuff that makes embedded developers lose sleep.
 
-No expensive hardware needed. No magic smoke released. Just pure learning.
+No expensive hardware needed. No wiring and HW setup time. Just pure learning.
 
-And when you're done? Well. Let's just say the device is trying to tell you something. 250 somethings, actually. At 25 per second. What is it? You'll find out when your driver works.
+And when you're done? Well. Let's just say the device is trying to tell you something. At 25 frames per second. What is it? You'll find out when your driver works.
 
 ```
-    +------------------+
-    |   Your Code      |  <-- This is where the magic happens
-    +------------------+
-           |
-    +------------------+
-    |  Linux Kernel    |  <-- The scary part (we'll help you through it)
-    +------------------+
-           |
-    +------------------+
-    |  PhantomFPGA     |  <-- Our fake FPGA (hiding something)
-    |  (QEMU Device)   |
-    +------------------+
-           |
-    +------------------+
-    |  TCP Server      |  <-- Streams the mystery to the world
-    +------------------+
-           |
-    +------------------+
-    |  Terminal Viewer |  <-- The big reveal
-    +------------------+
+              +------------- Host Machine -------------+
+              |                                        |
+              |   +------------------------------+     |
+              |   |       phantomfpga_view       |     |
+              |   |       (Terminal Viewer)      | <-- The big reveal
+              |   +------------------------------+     |
+              |                  ^                     |
+              +------------------|----- TCP :5000 -----+
+                                 |
+              +------------------|----- QEMU VM -------+
+              |                  |                     |
+              |   +------------------------------+     |
+              |   |       phantomfpga_app        | <-- Streams over TCP
+              |   +------------------------------+     |
+              |                  |                     |
+              |   +------------------------------+     |
+              |   |    Your Kernel Driver        | <-- This is where the magic happens
+              |   |    (phantomfpga_drv.ko)      |     |
+              |   +------------------------------+     |
+              |                  |                     |
+              |   +------------------------------+     |
+              |   |        Linux Kernel          | <-- The scary part (we'll help)
+              |   +------------------------------+     |
+              |                  |                     |
+              |   +------------------------------+     |
+              |   |     PhantomFPGA Device       | <-- Hiding something...
+              |   |     (Emulated PCIe FPGA)     |     |
+              |   +------------------------------+     |
+              |                                        |
+              +----------------------------------------+
 ```
 
 ## What Is This Thing?
@@ -189,6 +202,11 @@ phantomfpga login:
 
 Login as `root` with password `root`.
 
+> [!TIP]
+> **Working with the VM like a pro:**
+> - Open the VM in a **separate terminal tab or window**. You'll be switching between your host (for editing code, building) and the VM (for testing) constantly. Having them side by side is a game changer.
+> - If you're not a terminal ninja yet, try `mc` (Midnight Commander) - it's a file manager that runs in the terminal. Already installed in the VM. Type `mc` to launch it, `exit` to quit. Pro tip: `Ctrl+O` toggles between the `mc` panels and a regular terminal - super handy for running commands without leaving `mc`.
+
 ### Step 5: Verify the Device is There
 
 Inside the VM, run:
@@ -251,7 +269,7 @@ You've got the environment running. Now comes the actual learning:
 
 ### Building the Driver
 
-Build on your host machine, test inside the VM. The `driver/` and `app/` directories on your host are automatically shared with the VM, so anything you build shows up inside the VM instantly.
+Build on your host machine, test inside the VM. The `driver/` and `app/` directories on your host are automatically shared with the VM, so anything you build shows up inside the VM instantly. You can treat the `/mnt/driver` and `/mnt/app` directories **in the VM** as a window into your host - everything you in those on any side will be reflected on the other in real time.
 
 ```bash
 # On your host:
