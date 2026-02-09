@@ -160,12 +160,10 @@ struct phantomfpga_fault_cfg {
 };
 
 /* Fault injection flag bits */
-#ifndef PHANTOMFPGA_FAULT_DROP_FRAME
 #define PHANTOMFPGA_FAULT_DROP_FRAME      (1 << 0)
 #define PHANTOMFPGA_FAULT_CORRUPT_CRC     (1 << 1)
 #define PHANTOMFPGA_FAULT_CORRUPT_DATA    (1 << 2)
 #define PHANTOMFPGA_FAULT_SKIP_SEQUENCE   (1 << 3)
-#endif
 
 /* ------------------------------------------------------------------------ */
 /* IOCTL Commands                                                           */
@@ -283,8 +281,6 @@ struct phantomfpga_fault_cfg {
 /* Frame Header Structure (for userspace parsing)                           */
 /* ------------------------------------------------------------------------ */
 
-#ifndef PHANTOMFPGA_REGS_H  /* Only define if regs.h wasn't included first */
-
 /*
  * Frame header at the start of each 5120-byte frame.
  * All fields are little-endian.
@@ -292,8 +288,8 @@ struct phantomfpga_fault_cfg {
 struct phantomfpga_frame_header {
 	__le32 magic;           /* 0xF00DFACE */
 	__le32 sequence;        /* Frame sequence number (0-249, wraps) */
-	__le64 timestamp;       /* Nanoseconds since device start */
-};
+	__le64 reserved;        /* Reserved (must be 0) */
+} __attribute__((packed));
 
 /*
  * Full frame layout (5120 bytes):
@@ -311,13 +307,11 @@ struct phantomfpga_completion {
 	__le32 status;          /* 0=OK, else error code */
 	__le32 actual_length;   /* Bytes actually transferred */
 	__le64 timestamp;       /* Device timestamp */
-};
+} __attribute__((packed));
 
 /* Completion status codes */
 #define PHANTOMFPGA_COMPL_OK            0
 #define PHANTOMFPGA_COMPL_ERR_DMA       1
 #define PHANTOMFPGA_COMPL_ERR_OVERFLOW  2
-
-#endif /* PHANTOMFPGA_REGS_H */
 
 #endif /* PHANTOMFPGA_UAPI_H */

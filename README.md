@@ -92,9 +92,9 @@ You need **Linux**. This project won't run directly on macOS or Windows.
 | Windows | Use [WSL2](https://learn.microsoft.com/en-us/windows/wsl/install) with Ubuntu |
 
 > [!IMPORTANT]
-> **VM users:** Give your VM at least **8GB RAM** and **4 CPUs** -- the build compiles a lot of code in parallel. For Lima: `limactl edit <instance>` and add `cpus: 4` and `memory: "8GiB"`.
+> **VM users (not native Linux laptop/PC):** Give your VM at least **8GB RAM** and **4 CPUs** -- the build compiles a lot of code in parallel. For Lima: `limactl edit <instance>` and add `cpus: 4` and `memory: "8GiB"`.
 
-**Disk space:** About 15-20 GB.
+**Disk space:** About 15-20 GB. Yeah, I know. QEMU and Buildroot are hungry beasts.
 
 Once you have Linux running, install these packages:
 
@@ -267,6 +267,15 @@ You've got the environment running. Now comes the actual learning:
    - Load driver, run server, connect viewer
    - If you did everything right, you'll know
 
+## Documentation
+
+This is a good time to read the docs before you begin breaking stuff. Start here and work your way through:
+
+1. **[Architecture Overview](docs/architecture.md)** - Understand how all the pieces fit together
+2. **[Device Datasheet](docs/phantomfpga-datasheet.md)** - How the device works and the complete register reference
+3. **[Driver Implementation Guide](docs/driver-guide.md)** - Step-by-step instructions for completing the driver
+4. **[Glossary](docs/glossary.md)** - Quick reference for PCIe, DMA, MSI-X, and other jargon
+
 ### Building the Driver
 
 Build on your host machine, test inside the VM. The `driver/` and `app/` directories on your host are automatically shared with the VM, so anything you build shows up inside the VM instantly. You can treat the `/mnt/driver` and `/mnt/app` directories **in the VM** as a window into your host - everything you in those on any side will be reflected on the other in real time.
@@ -307,15 +316,8 @@ make
 
 And then... well. You'll see what you'll see. Or you won't, if something's broken. The device knows what it wants to show you. Your job is to let it.
 
-(Hint: Make sure your terminal is at least 110 columns wide and 45 rows tall. Just trust me on this one.)
-
-## Documentation
-
-Start here and work your way through:
-
-1. **[Architecture Overview](docs/architecture.md)** - Understand how all the pieces fit together
-2. **[Device Datasheet](docs/phantomfpga-datasheet.md)** - How the device works and the complete register reference
-3. **[Driver Implementation Guide](docs/driver-guide.md)** - Step-by-step instructions for completing the driver
+> [!NOTE]
+> Make sure your terminal is at least 110 columns wide and 45 rows tall. Just trust me on this one.
 
 ## Building for a Different Architecture
 

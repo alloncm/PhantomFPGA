@@ -459,8 +459,8 @@ static void print_usage(const char *prog_name)
     printf("  QEMU: Host is at 10.0.2.2, port 5000 forwarded.\n");
     printf("\n");
     printf("Frame Format (5120 bytes each):\n");
-    printf("  0x0000: Header (16 bytes) - magic, sequence, timestamp\n");
-    printf("  0x0010: ASCII art (4995 bytes) - 45 rows x 110 cols\n");
+    printf("  0x0000: Header (16 bytes) - [magic], [sequence], [reserved]\n");
+    printf("  0x0010: Payload: 2D array (4995 bytes) - 110 cols x 45 rows\n");
     printf("  0x1393: Padding (105 bytes)\n");
     printf("  0x13FC: CRC32 (4 bytes)\n");
     printf("\n");
@@ -781,8 +781,8 @@ static int process_frame(struct app_context *ctx, const void *buffer, uint32_t a
      *
      *   if (ctx->verbose) {
      *       const struct phantomfpga_frame_header *hdr = buffer;
-     *       printf("Frame %u: seq=%u ts=%lu\n",
-     *              ctx->frames_received, hdr->sequence, hdr->timestamp);
+     *       printf("Frame %u: seq=%u\n",
+     *              ctx->frames_received, hdr->sequence);
      *   }
      */
 

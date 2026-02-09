@@ -54,7 +54,7 @@ CONFIGURE_OPTS := \
 	--disable-docs
 
 # Device source files
-DEVICE_SOURCES := $(SRC_DIR)/phantomfpga.c $(SRC_DIR)/phantomfpga.h
+DEVICE_SOURCES := $(SRC_DIR)/phantomfpga.c $(SRC_DIR)/phantomfpga.h $(SRC_DIR)/frames_data.h
 
 # -----------------------------------------------------------------------------
 # Phony Targets
@@ -150,6 +150,7 @@ $(STAMP_COPY): $(STAMP_CLONE) $(DEVICE_SOURCES) | $(STAMP_DIR)
 	@echo "=== Copying PhantomFPGA device files ==="
 	cp $(SRC_DIR)/phantomfpga.c $(QEMU_MISC_DIR)/
 	cp $(SRC_DIR)/phantomfpga.h $(QEMU_MISC_DIR)/
+	cp $(SRC_DIR)/frames_data.h $(QEMU_MISC_DIR)/
 	@# Update meson.build if needed
 	@if ! grep -q "phantomfpga" "$(QEMU_MISC_DIR)/meson.build" 2>/dev/null; then \
 		echo "" >> "$(QEMU_MISC_DIR)/meson.build"; \
@@ -231,6 +232,7 @@ sync:
 	fi
 	cp -v $(SRC_DIR)/phantomfpga.c $(QEMU_MISC_DIR)/
 	cp -v $(SRC_DIR)/phantomfpga.h $(QEMU_MISC_DIR)/
+	cp -v $(SRC_DIR)/frames_data.h $(QEMU_MISC_DIR)/
 
 # Re-run configure (useful after changing options)
 reconfigure:

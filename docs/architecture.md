@@ -8,51 +8,61 @@ the type who likes to understand the full picture before diving in, this is for 
 If you prefer to just start coding and figure it out later... well, you'll probably
 end up here eventually anyway.
 
+> **New to kernel development?** Check the **[Glossary](glossary.md)** for quick
+> explanations of terms like PCIe, DMA, BAR, MSI-X, and other jargon.
+
 ## System Overview
 
 ```
-+------------------------------------------------------------------+
-|                          HOST SYSTEM                             |
-|                                                                  |
-|  +------------------------------------------------------------+  |
-|  |                         QEMU                               |  |
-|  |                                                            |  |
-|  |  +------------------------------------------------------+  |  |
-|  |  |                    GUEST VM                          |  |  |
-|  |  |                                                      |  |  |
-|  |  |  +-------------+      +------------------------+     |  |  |
-|  |  |  |  Userspace  |      |    Linux Kernel        |     |  |  |
-|  |  |  |             |      |                        |     |  |  |
-|  |  |  | +---------+ | ioctl| +--------------------+ |     |  |  |
-|  |  |  | | App     |<------>| | phantomfpga_drv.ko | |     |  |  |
-|  |  |  | +---------+ | mmap | +--------------------+ |     |  |  |
-|  |  |  |      |      |      |          |             |     |  |  |
-|  |  |  +------|------+      +----------|-------------+     |  |  |
-|  |  |         |                        |                   |  |  |
-|  |  |         |   DMA Buffer           | MMIO + MSI-X      |  |  |
-|  |  |         v   (shared)             v                   |  |  |
-|  |  |  +------------------------------------------+        |  |  |
-|  |  |  |              Guest Memory                |        |  |  |
-|  |  |  |  +------------------------------------+  |        |  |  |
-|  |  |  |  |        Ring Buffer (DMA)           |  |        |  |  |
-|  |  |  |  |  [Frame0][Frame1][Frame2]...[FrameN]  |        |  |  |
-|  |  |  |  +------------------------------------+  |        |  |  |
-|  |  |  +------------------------------------------+        |  |  |
-|  |  +------------------------------------------------------+  |  |
-|  |                         ^                                  |  |
-|  |                         | DMA Write                        |  |
-|  |                         |                                  |  |
-|  |  +------------------------------------------------------+  |  |
-|  |  |              PhantomFPGA Device                      |  |  |
-|  |  |                                                      |  |  |
-|  |  |  +------------+  +----------+  +------------------+  |  |  |
-|  |  |  | Registers  |  | Timer    |  | Frame Generator  |  |  |  |
-|  |  |  | (BAR0)     |  | (1kHz)   |  | (PRNG payload)   |  |  |  |
-|  |  |  +------------+  +----------+  +------------------+  |  |  |
-|  |  |                                                      |  |  |
-|  |  +------------------------------------------------------+  |  |
-|  +------------------------------------------------------------+  |
-+------------------------------------------------------------------+
++-------------------------------------------------------------------------+
+|                              HOST SYSTEM                                |
+|                                                                         |
+|  +----------+                                                           |
+|  |  Viewer  |  (phantomfpga_view - client, runs on host terminal)       |
+|  +----+-----+                                                           |
+|       |                                                                 |
+|       | TCP :5000                                                       |
+|       v                                                                 |
+|  +-------------------------------------------------------------------+  |
+|  |                            QEMU                                   |  |
+|  |                                                                   |  |
+|  |  +---------------------------------------------------------+      |  |
+|  |  |                       GUEST VM                          |      |  |
+|  |  |                                                         |      |  |
+|  |  |  +---------------+      +------------------------+      |      |  |
+|  |  |  |   Userspace   |      |    Linux Kernel        |      |      |  |
+|  |  |  |               |      |                        |      |      |  |
+|  |  |  | +-----------+ | ioctl| +--------------------+ |      |      |  |
+|  |  |  | | App       |<------>| | phantomfpga_drv.ko | |      |      |  |
+|  |  |  | | (TCP srv) | | mmap | +--------------------+ |      |      |  |
+|  |  |  | +-----------+ |      |          |             |      |      |  |
+|  |  |  |       |       |      +----------|-------------+      |      |  |
+|  |  |  +-------|-------+                 |                    |      |  |
+|  |  |          |                         |                    |      |  |
+|  |  |          |   DMA Buffer            | MMIO + MSI-X       |      |  |
+|  |  |          v   (shared)              v                    |      |  |
+|  |  |  +---------------------------------------------+        |      |  |
+|  |  |  |               Guest Memory                  |        |      |  |
+|  |  |  |  +---------------------------------------+  |        |      |  |
+|  |  |  |  |         Ring Buffer (DMA)             |  |        |      |  |
+|  |  |  |  |  [Frame0][Frame1][Frame2]...[FrameN]  |  |        |      |  |
+|  |  |  |  +---------------------------------------+  |        |      |  |
+|  |  |  +---------------------------------------------+        |      |  |
+|  |  +---------------------------------------------------------+      |  |
+|  |                            ^                                      |  |
+|  |                            | DMA Write                            |  |
+|  |                            |                                      |  |
+|  |  +---------------------------------------------------------+      |  |
+|  |  |                 PhantomFPGA Device                      |      |  |
+|  |  |                                                         |      |  |
+|  |  |  +------------+  +----------+  +---------------------+  |      |  |
+|  |  |  | Registers  |  | Timer    |  | Frame Generator     |  |      |  |
+|  |  |  | (BAR0)     |  | (25 Hz)  |  | (embedded frames)   |  |      |  |
+|  |  |  +------------+  +----------+  +---------------------+  |      |  |
+|  |  |                                                         |      |  |
+|  |  +---------------------------------------------------------+      |  |
+|  +-------------------------------------------------------------------+  |
++-------------------------------------------------------------------------+
 ```
 
 ## Components
@@ -60,6 +70,9 @@ end up here eventually anyway.
 ### 1. PhantomFPGA QEMU Device
 
 **Location:** `platform/qemu/src/hw/misc/phantomfpga.c`
+
+> **Already implemented.** This component is complete and ready to use. You don't
+> need to modify it - just understand how it works so you can write the driver.
 
 The virtual PCIe device that simulates an FPGA frame producer. Key features:
 
@@ -84,14 +97,17 @@ The virtual PCIe device that simulates an FPGA frame producer. Key features:
 
 When running, the device:
 1. Fires a timer at the configured frame rate
-2. Generates a frame with header + pseudo-random payload
-3. Writes the frame to the ring buffer via DMA
+2. Assembles a frame with header + payload (embedded data) + CRC
+3. Writes the frame to the ring buffer via scatter-gather DMA
 4. Advances the producer index
 5. Fires MSI-X interrupt when watermark is reached
 
 ### 2. Linux Kernel Driver
 
 **Location:** `driver/phantomfpga_drv.c`
+
+> **Your job.** The skeleton is there with detailed TODOs. See the
+> [Driver Guide](driver-guide.md) for step-by-step instructions.
 
 The kernel module that interfaces with the device. Responsibilities:
 
@@ -132,19 +148,43 @@ The kernel module that interfaces with the device. Responsibilities:
 +-------------------------------------------------------------------+
 ```
 
-### 3. Userspace Application
+### 3. Userspace Application (TCP Server)
 
 **Location:** `app/phantomfpga_app.c`
 
-A test application demonstrating driver interaction:
+> **Your job.** The skeleton handles argument parsing, TCP setup, and the main
+> loop structure. You implement the frame processing and validation.
+
+The server application that bridges the driver and external viewers:
 
 1. Opens `/dev/phantomfpga0`
 2. Configures device via `PHANTOMFPGA_IOCTL_SET_CFG`
 3. Maps the DMA buffer via `mmap()`
 4. Starts streaming via `PHANTOMFPGA_IOCTL_START`
 5. Polls for new frames
-6. Processes and validates frames
-7. Marks frames consumed via `PHANTOMFPGA_IOCTL_CONSUME_FRAME`
+6. Validates frames (magic, sequence, CRC)
+7. **Streams frames over TCP to connected clients**
+8. Marks frames consumed via `PHANTOMFPGA_IOCTL_CONSUME_FRAME`
+
+The app runs inside the guest VM and listens on port 5000 for viewer connections.
+
+### 4. Terminal Viewer (TCP Client)
+
+**Location:** `viewer/phantomfpga_view.c`
+
+> **Your job.** The skeleton handles networking and terminal setup. You implement
+> the frame validation and display logic. This is the final piece of the puzzle.
+
+A terminal-based client that runs on the host machine:
+
+1. Connects to the app's TCP server (default: `localhost:5000`)
+2. Receives frame data over the network
+3. Validates frame integrity (CRC check)
+4. Displays frame data in the terminal
+5. Tracks statistics (frame rate, dropped frames, etc.)
+
+The viewer is the final piece of the puzzle - when everything works, you'll see
+what the device has been hiding all along.
 
 ## Data Flow
 
@@ -174,19 +214,19 @@ Device                        Memory                      Driver
    |                           |                           |
    |  Timer fires              |                           |
    |                           |                           |
-   |  DMA write header         |                           |
+   |  DMA write frame          |                           |
    |-------------------------->| Frame N                   |
-   |  DMA write payload        |  +------------------+     |
-   |-------------------------->|  | magic: 0xABCD1234|     |
-   |                           |  | seq: N           |     |
-   |  prod_idx++               |  | ts_ns: ...       |     |
-   |                           |  | payload_len: ... |     |
-   |  pending >= watermark?    |  | [payload bytes]  |     |
    |                           |  +------------------+     |
+   |                           |  | magic: 0xF00DFACE|     |
+   |                           |  | seq: N           |     |
+   |  prod_idx++               |  | [payload bytes]  |     |
+   |                           |  | crc32: ...       |     |
+   |  pending >= watermark?    |  +------------------+     |
+   |                           |                           |
    |  Yes: set IRQ_WATERMARK   |                           |
    |                           |                           |
    |  MSI-X vector 0           |                           |
-   |---------------------------------------------->|       |
+   |------------------------------------------------------>|
    |                           |                           |
    |                           |     Read IRQ_STATUS       |
    |                           |<--------------------------|
@@ -197,10 +237,10 @@ Device                        Memory                      Driver
    |                           |     Read PROD_IDX         |
    |                           |<--------------------------|
    |                           |                           |
-   |                           |     wake_up_interruptible |
+   |                           |   wake_up_interruptible   |
    |                           |           |               |
    |                           |           v               |
-   |                           |     Userspace unblocks    |
+   |                           |    Userspace unblocks     |
 ```
 
 ### Data Plane (Frame Consumption)
@@ -231,7 +271,8 @@ Userspace                    Kernel                      Device
 ## Ring Buffer Protocol
 
 The ring buffer is a circular queue with power-of-2 size for efficient
-index wrapping.
+index wrapping. If you've ever dealt with a circular parking garage,
+it's the same idea - except the cars are frames and nobody's honking.
 
 ### Memory Layout
 
@@ -239,10 +280,10 @@ index wrapping.
 DMA Buffer Base (dma_addr)
 |
 v
-+--------+--------+--------+-----+--------+
-| Frame0 | Frame1 | Frame2 | ... | FrameN |
-+--------+--------+--------+-----+--------+
-|<------- frame_size ----->|
++--------------+--------------+--------------+-----+--------------+
+|    Frame0    |    Frame1    |    Frame2    | ... |    FrameN    |
++--------------+--------------+--------------+-----+--------------+
+|<-frame_size->|
 
 Total size = frame_size * ring_size
 ```
@@ -252,20 +293,19 @@ Total size = frame_size * ring_size
 ```
 Ring with 8 entries (ring_size = 8):
 
-                     Consumer                Producer
-                        |                       |
-                        v                       v
+          Consumer        Producer
+              |               |
+              v               v
         +---+---+---+---+---+---+---+---+
 Slot:   | 0 | 1 | 2 | 3 | 4 | 5 | 6 | 7 |
         +---+---+---+---+---+---+---+---+
-              ^   ^   ^   ^
-              |   +---+   |
+              ^           ^
               |  Pending  |
-              |  Frames   |
+              |  (1,2,3,4)|
               +-----------+
 
-cons_idx = 1
-prod_idx = 5
+cons_idx = 1  (next frame to consume)
+prod_idx = 5  (next slot device will write to)
 pending = (prod_idx - cons_idx) & (ring_size - 1) = 4
 
 After consuming one frame:
@@ -275,7 +315,9 @@ pending = 3
 
 ### Full vs Empty
 
-The ring keeps one slot empty to distinguish full from empty:
+The ring keeps one slot empty to distinguish full from empty. Yes, we
+sacrifice one slot. It's a classic tradeoff - simpler code or more space.
+Simpler code won.
 
 | Condition | Formula |
 |-----------|---------|
@@ -285,7 +327,8 @@ The ring keeps one slot empty to distinguish full from empty:
 
 ### Overrun Handling
 
-When the ring is full and the device tries to produce a new frame:
+When the ring is full and the device tries to produce a new frame,
+things get ugly (but predictable):
 
 1. Device sets `STATUS_OVERRUN` flag
 2. Device increments `stat_overruns` counter
@@ -293,9 +336,13 @@ When the ring is full and the device tries to produce a new frame:
 4. Frame is **not** written (dropped)
 5. Producer index is **not** advanced
 
-The driver must consume frames faster to prevent overruns.
+The driver must consume frames faster to prevent overruns. The device
+will not wait for you. It has places to be.
 
 ## MSI-X Interrupt Flow
+
+MSI-X is how the device taps the CPU on the shoulder without being rude.
+Two vectors, two reasons to interrupt your day.
 
 ### Vector Assignment
 
@@ -317,7 +364,7 @@ The driver must consume frames faster to prevent overruns.
 
 ### Watermark Threshold
 
-The watermark controls interrupt coalescing:
+The watermark controls interrupt coalescing, examples:
 
 | Watermark | Behavior |
 |-----------|----------|
@@ -335,10 +382,17 @@ The device supports testing error handling via the `FAULT_INJECT` register:
 | 1 | CORRUPT_DATA | Flip bits in payload, set CORRUPTED flag |
 | 2 | DELAY_IRQ | Suppress MSI-X (test polling fallback) |
 
-Enable in the guest:
+Enable in the guest (before loading the driver):
 ```bash
-# Write directly to device register (requires root, mapped BAR)
-# Or via driver debug interface if implemented
+# Get BAR0 address from lspci, enable device, then poke the FAULT_INJECT register.
+# 0x58 is the register offset - see the datasheet for the full register map.
+echo 1 > /sys/bus/pci/devices/0000:00:01.0/enable
+BAR0=$(lspci -v -s 00:01.0 | grep "Memory at" | awk '{print $3}')
+devmem $((0x${BAR0} + 0x58)) w 0x01   # Enable DROP_FRAMES (bit 0)
+devmem $((0x${BAR0} + 0x58)) w 0x03   # Enable DROP + CORRUPT (bits 0,1)
+
+# No output means success. Read back to verify:
+devmem $((0x${BAR0} + 0x58))          # Should print 0x00000003
 ```
 
 ## Memory Considerations
@@ -370,6 +424,9 @@ For mmap to userspace, use `dma_mmap_coherent()` or ensure
 
 ## Concurrency Model
 
+Welcome to the fun part - making sure nothing explodes when multiple
+things happen at once. This is where bugs go to hide.
+
 ### Device-side
 
 The QEMU device runs in a single QEMU thread (main loop or dedicated vcpu).
@@ -380,11 +437,11 @@ All register access is serialized by QEMU's memory region locking.
 ```
 +------------------+     +------------------+     +------------------+
 |  ioctl context   |     |  IRQ context     |     |  tasklet/work    |
-|  (process)       |     |  (hard IRQ)      |     |  (if used)       |
+|  (process)       |     |  (hard IRQ)      |     |    (if used)     |
 +--------+---------+     +--------+---------+     +--------+---------+
          |                        |                        |
          v                        v                        v
-    ioctl_lock (mutex)       spinlock                 spinlock
+    ioctl_lock (mutex)        spinlock                 spinlock
          |                        |                        |
          v                        v                        v
     +----------------------------------------------------------+
@@ -400,14 +457,18 @@ All register access is serialized by QEMU's memory region locking.
 
 ### Ordering Rules
 
-1. Never hold spinlock when calling `mutex_lock`
+These rules exist because someone, somewhere, learned them the hard way:
+
+1. Never hold spinlock when calling `mutex_lock` (deadlock city)
 2. Use `spin_lock_irqsave` in process context (can be interrupted)
 3. Use `spin_lock` in IRQ context (already interrupt-disabled)
-4. Keep critical sections short
+4. Keep critical sections short (the system is waiting on you)
 
 ## Guest-Host Interface
 
 ### Shared Directories (9p virtfs)
+
+> See [Glossary: 9p/virtfs](glossary.md#9p--virtfs) for background on this protocol.
 
 ```
 Host                          Guest
@@ -440,13 +501,7 @@ gdb vmlinux
 
 ## Performance Characteristics
 
-### Theoretical Limits
-
-| Frame Rate | Frame Size | Bandwidth | Latency (@1kHz) |
-|------------|------------|-----------|-----------------|
-| 1 kHz | 4 KB | 4 MB/s | 1 ms |
-| 10 kHz | 4 KB | 40 MB/s | 0.1 ms |
-| 100 kHz | 256 B | 25 MB/s | 0.01 ms |
+Or: "Why is my frame rate not 10,000 fps?" - You, probably not.
 
 ### Practical Considerations
 
@@ -455,18 +510,19 @@ gdb vmlinux
 - MSI-X delivery adds latency vs polling
 - Guest CPU scheduling affects consumption rate
 
-For training purposes, 1 kHz with 4 KB frames is a reasonable default. You're
-learning, not trying to break speed records. Save that for when you have real
-hardware and a deadline.
+PhantomFPGA defaults to 25 fps with 5120-byte frames - plenty for what it's
+trying to show you. You're learning, not trying to break speed records. Save
+that for when you have real hardware and a deadline.
 
 ## Still With Me?
 
 If you made it this far, you now understand more about virtual device architecture
 than most people learn in their first year of embedded work. Give yourself a pat
-on the back. Or a coffee. Or both.
+on the back. Or a coffee. Or both, you deserve it.
 
 ## Next Steps
 
+- **[Glossary](glossary.md)** - Quick reference for PCIe, DMA, MSI-X, and other jargon
 - **[Device Datasheet](phantomfpga-datasheet.md)** - How the device works and the complete register reference
 - **[Driver Guide](driver-guide.md)** - Time to write some code
 

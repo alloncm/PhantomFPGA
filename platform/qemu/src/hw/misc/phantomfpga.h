@@ -204,7 +204,7 @@ typedef struct PhantomFPGACompletion {
 typedef struct PhantomFPGAFrameHeader {
     uint32_t magic;         /* 0xF00DFACE */
     uint32_t sequence;      /* Frame sequence number (0-249, wraps) */
-    uint64_t timestamp;     /* Nanoseconds since device start */
+    uint64_t reserved;      /* Reserved (must be 0) */
 } QEMU_PACKED PhantomFPGAFrameHeader;
 
 /* ------------------------------------------------------------------------ */

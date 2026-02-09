@@ -265,7 +265,7 @@ copy_device_sources() {
     fi
 
     # Copy device files
-    for file in phantomfpga.c phantomfpga.h; do
+    for file in phantomfpga.c phantomfpga.h frames_data.h; do
         if [[ -f "${src_hw}/${file}" ]]; then
             cp -v "${src_hw}/${file}" "${dst_hw}/" || die "Failed to copy ${file}"
         else

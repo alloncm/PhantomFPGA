@@ -44,7 +44,7 @@
 
 /* ------------------------------------------------------------------------ */
 /* CRC32 Implementation (IEEE 802.3 polynomial)                             */
-/* Used to update the timestamp and recompute CRC on frame transmission     */
+/* Used to recompute CRC when fault injection corrupts frame data           */
 /* ------------------------------------------------------------------------ */
 
 static const uint32_t crc32_table[256] = {
@@ -507,13 +507,13 @@ static void phantomfpga_transmit_frame(PhantomFPGAState *s)
     PhantomFPGACompletion compl;
     uint64_t desc_addr;
     uint8_t frame_buf[PHANTOMFPGA_FRAME_SIZE];
-    const uint8_t *src_frame;
-    uint64_t timestamp;
+    const uint8_t *frame_to_send;
     uint32_t crc;
     bool do_fault = phantomfpga_should_fault(s);
     bool corrupt_crc = false;
     bool corrupt_data = false;
     bool skip_sequence = false;
+    bool need_modify = false;
     int ret;
 
     /* Check if device is running */
@@ -534,9 +534,11 @@ static void phantomfpga_transmit_frame(PhantomFPGAState *s)
     /* Check other fault flags */
     if ((s->fault_inject & PHANTOMFPGA_FAULT_CORRUPT_CRC) && do_fault) {
         corrupt_crc = true;
+        need_modify = true;
     }
     if ((s->fault_inject & PHANTOMFPGA_FAULT_CORRUPT_DATA) && do_fault) {
         corrupt_data = true;
+        need_modify = true;
     }
     if ((s->fault_inject & PHANTOMFPGA_FAULT_SKIP_SEQUENCE) && do_fault) {
         skip_sequence = true;
@@ -591,37 +593,39 @@ static void phantomfpga_transmit_frame(PhantomFPGAState *s)
         goto complete_desc;
     }
 
-    /* Get source frame from pre-built data */
-    src_frame = &phantomfpga_frames[s->current_frame * PHANTOMFPGA_FRAME_SIZE];
+    /*
+     * Get source frame from pre-built data.
+     * Pre-built frames include magic, sequence (0-249), reserved bytes,
+     * ASCII payload, and pre-computed CRC. For zero-overhead operation,
+     * we DMA directly from pre-built data unless fault injection requires
+     * modification.
+     */
+    frame_to_send = &phantomfpga_frames[s->current_frame * PHANTOMFPGA_FRAME_SIZE];
 
-    /* Copy frame to local buffer so we can modify header */
-    memcpy(frame_buf, src_frame, PHANTOMFPGA_FRAME_SIZE);
+    if (need_modify) {
+        /* Fault injection active: copy frame and modify */
+        memcpy(frame_buf, frame_to_send, PHANTOMFPGA_FRAME_SIZE);
 
-    /* Update timestamp in header */
-    timestamp = qemu_clock_get_ns(QEMU_CLOCK_VIRTUAL);
-    memcpy(&frame_buf[8], &timestamp, 8);  /* Offset 8 is timestamp field */
+        /* Apply data corruption if requested */
+        if (corrupt_data) {
+            frame_buf[100] ^= 0xFF;
+            frame_buf[200] ^= 0xAA;
+            DPRINTF("corrupted frame data (fault injection)\n");
+        }
 
-    /* Update sequence number to our running counter */
-    memcpy(&frame_buf[4], &s->sequence, 4);  /* Offset 4 is sequence field */
+        /* Recompute CRC after modifications */
+        crc = crc32_compute(frame_buf, PHANTOMFPGA_FRAME_SIZE - 4);
+        if (corrupt_crc) {
+            crc ^= 0xDEADBEEF;
+            DPRINTF("corrupted CRC (fault injection)\n");
+        }
+        memcpy(&frame_buf[PHANTOMFPGA_FRAME_SIZE - 4], &crc, 4);
 
-    /* Apply data corruption if requested */
-    if (corrupt_data) {
-        /* Corrupt some bytes in the ASCII data area */
-        frame_buf[100] ^= 0xFF;
-        frame_buf[200] ^= 0xAA;
-        DPRINTF("corrupted frame data (fault injection)\n");
+        frame_to_send = frame_buf;
     }
-
-    /* Recompute CRC (bytes 0x0000-0x13FB, then store at 0x13FC) */
-    crc = crc32_compute(frame_buf, PHANTOMFPGA_FRAME_SIZE - 4);
-    if (corrupt_crc) {
-        crc ^= 0xDEADBEEF;
-        DPRINTF("corrupted CRC (fault injection)\n");
-    }
-    memcpy(&frame_buf[PHANTOMFPGA_FRAME_SIZE - 4], &crc, 4);
 
     /* Write frame data via DMA */
-    ret = pci_dma_write(pci_dev, desc.dst_addr, frame_buf, PHANTOMFPGA_FRAME_SIZE);
+    ret = pci_dma_write(pci_dev, desc.dst_addr, frame_to_send, PHANTOMFPGA_FRAME_SIZE);
 
     if (ret != 0) {
         WARN("DMA write failed for frame at 0x%lx\n",
@@ -635,8 +639,8 @@ static void phantomfpga_transmit_frame(PhantomFPGAState *s)
         compl.status = PHANTOMFPGA_COMPL_STATUS_OK;
         compl.actual_length = PHANTOMFPGA_FRAME_SIZE;
 
-        DPRINTF("transmitted frame seq=%u (anim=%u) to addr=0x%lx\n",
-                s->sequence, s->current_frame, (unsigned long)desc.dst_addr);
+        DPRINTF("transmitted frame %u to addr=0x%lx\n",
+                s->current_frame, (unsigned long)desc.dst_addr);
     }
 
     /* Write completion structure at end of buffer */

@@ -828,7 +828,7 @@ Offset  Size   Field        Description
 ------  ----   -----        -----------
 0x0000  4      magic        0xF00DFACE
 0x0004  4      sequence     Frame index (0-249, wraps)
-0x0008  8      timestamp    Nanoseconds since device start
+0x0008  8      reserved     Reserved (must be 0)
 0x0010  4995   data         The actual payload data
 0x1393  105    padding      Zero bytes
 0x13FC  4      crc32        CRC-32 of bytes 0x0000-0x13FB
@@ -842,7 +842,7 @@ Offset  Size   Field        Description
 struct phantomfpga_frame_header {
     __le32 magic;       /* 0xF00DFACE - check this first! */
     __le32 sequence;    /* 0-249, loops forever */
-    __le64 timestamp;   /* Device time in nanoseconds */
+    __le64 reserved;    /* Reserved (must be 0) */
 } __packed;
 ```
 
@@ -984,7 +984,7 @@ if (expected_crc != computed_crc) {
 ```
 +00: magic     u32   0xF00DFACE
 +04: sequence  u32   Frame index (0-249)
-+08: timestamp u64   Nanoseconds since start
++08: reserved  u64   Reserved (must be 0)
 +10: data...         5104 bytes (4995 data + 105 padding + 4 CRC)
 ```
 

@@ -61,6 +61,9 @@ Your job is to complete the TODOs to make it fully functional.
 **Pro tip:** Keep a second terminal with `dmesg -w` running to see kernel
 messages in real-time.
 
+> [!NOTE]
+> **On the eternal tabs vs spaces debate:** This is kernel code. Tabs won. The Linux kernel coding style mandates hard tabs for indentation, and arguing about it is about as productive as explaining to your cat why it shouldn't sit on your keyboard. If seeing tabs in source files makes you uncomfortable, consider it exposure therapy. You'll survive. Probably.
+
 ---
 
 ## Part 1: DMA Buffer Allocation

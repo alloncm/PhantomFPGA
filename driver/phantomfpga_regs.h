@@ -17,6 +17,7 @@
 #define PHANTOMFPGA_REGS_H
 
 #include <linux/types.h>
+#include "phantomfpga_uapi.h"
 
 /* ------------------------------------------------------------------------ */
 /* PCI Device Identification                                                */
@@ -33,17 +34,9 @@
 /* ------------------------------------------------------------------------ */
 
 #define PHANTOMFPGA_BAR0_SIZE       4096
-#define PHANTOMFPGA_FRAME_MAGIC     0xF00DFACE  /* Magic for frames */
 #define PHANTOMFPGA_DEV_ID_VAL      0xF00DFACE  /* Expected in DEV_ID register */
 #define PHANTOMFPGA_DEV_VER         0x00030000  /* v3.0.0 - ASCII Animation */
 #define PHANTOMFPGA_MSIX_VECTORS    3           /* Complete, error, no_desc */
-
-/* Frame constants - fixed, no configuration needed */
-#define PHANTOMFPGA_FRAME_SIZE      5120    /* Bytes per frame */
-#define PHANTOMFPGA_FRAME_COUNT     250     /* Total frames (10 sec @ 25fps) */
-#define PHANTOMFPGA_FRAME_DATA_SIZE 4995    /* ASCII data portion */
-#define PHANTOMFPGA_FRAME_ROWS      45
-#define PHANTOMFPGA_FRAME_COLS      110
 
 /* Default values */
 #define PHANTOMFPGA_DEFAULT_FRAME_RATE  25      /* 25 fps - smooth animation */
@@ -158,13 +151,6 @@ static inline void phantomfpga_irq_coalesce_unpack(u32 val, u16 *count, u16 *tim
 /* Fault Injection (@ 0x058) Bits - Simplified for Frames                   */
 /* ------------------------------------------------------------------------ */
 
-#ifndef PHANTOMFPGA_FAULT_DROP_FRAME
-#define PHANTOMFPGA_FAULT_DROP_FRAME        BIT(0)  /* Drop frames randomly */
-#define PHANTOMFPGA_FAULT_CORRUPT_CRC       BIT(1)  /* Corrupt CRC32 value */
-#define PHANTOMFPGA_FAULT_CORRUPT_DATA      BIT(2)  /* Flip bits in frame data */
-#define PHANTOMFPGA_FAULT_SKIP_SEQUENCE     BIT(3)  /* Skip sequence numbers */
-#endif
-
 #define PHANTOMFPGA_FAULT_ALL               (PHANTOMFPGA_FAULT_DROP_FRAME | \
                                              PHANTOMFPGA_FAULT_CORRUPT_CRC | \
                                              PHANTOMFPGA_FAULT_CORRUPT_DATA | \
@@ -198,44 +184,12 @@ struct phantomfpga_sg_desc {
 #define PHANTOMFPGA_DESC_SIZE   sizeof(struct phantomfpga_sg_desc)
 
 /* ------------------------------------------------------------------------ */
-/* Completion Writeback (16 bytes)                                          */
-/* Written at the end of the buffer when descriptor completes               */
+/* Derived sizes and offsets                                                */
+/* Structs live in phantomfpga_uapi.h - these are convenience macros        */
 /* ------------------------------------------------------------------------ */
 
-#ifndef PHANTOMFPGA_COMPL_OK
-#define PHANTOMFPGA_COMPL_OK             0
-#define PHANTOMFPGA_COMPL_ERR_DMA        1
-#define PHANTOMFPGA_COMPL_ERR_OVERFLOW   2
-
-struct phantomfpga_completion {
-	__le32 status;         /* 0=OK, else error code */
-	__le32 actual_length;  /* Bytes actually transferred */
-	__le64 timestamp;      /* Device timestamp (ns since start) */
-} __packed;
-#endif
-
-#define PHANTOMFPGA_COMPL_SIZE  sizeof(struct phantomfpga_completion)
-
-/* ------------------------------------------------------------------------ */
-/* Frame Header Structure (16 bytes)                                        */
-/* Matches what's in each pre-built frame                                   */
-/* ------------------------------------------------------------------------ */
-
-struct phantomfpga_frame_header {
-	__le32 magic;          /* 0xF00DFACE */
-	__le32 sequence;       /* Frame sequence number (0-249, wraps) */
-	__le64 timestamp;      /* Nanoseconds since device start */
-} __packed;
-
-#define PHANTOMFPGA_FRAME_HDR_SIZE  sizeof(struct phantomfpga_frame_header)
-
-/*
- * Full frame layout (5120 bytes):
- *   0x0000: Frame header (16 bytes)
- *   0x0010: ASCII frame data (4995 bytes)
- *   0x1393: Zero padding (105 bytes)
- *   0x13FC: CRC32 (4 bytes)
- */
+#define PHANTOMFPGA_COMPL_SIZE          sizeof(struct phantomfpga_completion)
+#define PHANTOMFPGA_FRAME_HDR_SIZE      sizeof(struct phantomfpga_frame_header)
 #define PHANTOMFPGA_FRAME_CRC_OFFSET    (PHANTOMFPGA_FRAME_SIZE - 4)
 #define PHANTOMFPGA_FRAME_DATA_OFFSET   PHANTOMFPGA_FRAME_HDR_SIZE
 #define PHANTOMFPGA_FRAME_PADDING_SIZE  105

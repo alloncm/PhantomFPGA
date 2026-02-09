@@ -34,6 +34,6 @@ Full guide: docs/driver-guide.md (on your host)
 
 Happy hacking!
 ================================================================================
-    *** To exit this VM: press Ctrl-A then X ***
+       Console: Ctrl-A then X to exit  |  SSH: type 'exit' to disconnect
 ================================================================================
 
