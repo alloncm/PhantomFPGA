@@ -2,8 +2,8 @@
 /*
  * PhantomFPGA Viewer - YOUR IMPLEMENTATION
  *
- * This is the file you need to edit. Implement the TODO methods below
- * to receive, validate, and display ASCII animation frames.
+ * This is the file you need to edit. Implement the 7 TODO methods below
+ * to receive, validate, display, and record ASCII animation frames.
  *
  * Read phantomfpga_view.h for the class interface and frame constants.
  *
@@ -13,6 +13,7 @@
  *   frame_buffer_  -- std::array<uint8_t, 5120> for the current frame
  *   stats_         -- ViewerStats (frames_received, frames_dropped, etc.)
  *   running_       -- volatile bool, goes false on Ctrl+C
+ *   record_path_   -- filename from --record flag (empty = no recording)
  *
  * Frame layout (frame::SIZE = 5120 bytes):
  *   Offset 0:    FrameHeader (16 bytes) -- magic, sequence, reserved
@@ -30,7 +31,7 @@
 /* ----------------------------------------------------------------------- */
 /* PhantomFpgaViewerImpl -- YOUR CODE GOES HERE                            */
 /*                                                                         */
-/* Implement the 6 TODO methods below. The base class handles TCP          */
+/* Implement the 7 TODO methods below. The base class handles TCP          */
 /* connection, terminal setup, signal handling, and the main loop.         */
 /* ----------------------------------------------------------------------- */
 
@@ -161,6 +162,38 @@ protected:
 		fprintf(stderr, "TODO: Implement print_stats()\n");
 		/* --- END YOUR CODE --- */
 	}
+
+	/*
+	 * TODO 7: Record frames to disk
+	 *
+	 * When the user passes --record FILE, you should save every received
+	 * frame to disk for offline analysis / validation.
+	 *
+	 * The base class already parses --record and stores the filename in
+	 * record_path_ (empty string means recording is disabled).
+	 *
+	 * You need to:
+	 * 1. Add a FILE* member to this class (initialized to nullptr)
+	 * 2. In receive_frame(), AFTER reading the frame into frame_buffer_:
+	 *    a. If record_path_ is empty, skip recording
+	 *    b. If the file isn't open yet, open it:
+	 *       fopen(record_path_.c_str(), "wb")
+	 *    c. Write the raw frame: fwrite(frame_buffer_.data(), 1, frame::SIZE, file)
+	 * 3. In print_stats(), close the file if it was opened
+	 *
+	 * Recording format: raw 5120-byte frames, back to back. No extra
+	 * headers or metadata. This makes offline validation trivial -- just
+	 * read 5120-byte chunks and check each one.
+	 *
+	 * Record ALL received frames, even if they later fail validation.
+	 * That's the whole point of a debug recording.
+	 *
+	 * Usage: ./phantomfpga_view localhost 5000 --record stream.bin
+	 */
+
+	/* --- YOUR CODE HERE (modify receive_frame and print_stats above) --- */
+	/* Add a FILE* member and integrate recording into existing methods.   */
+	/* --- END YOUR CODE --- */
 };
 
 /* ----------------------------------------------------------------------- */

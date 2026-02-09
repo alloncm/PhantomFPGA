@@ -182,9 +182,11 @@ A terminal-based client that runs on the host machine:
 3. Validates frame integrity (CRC check)
 4. Displays frame data in the terminal
 5. Tracks statistics (frame rate, dropped frames, etc.)
+6. Optionally records raw frames to disk (`--record`) for offline validation
 
 The viewer is the final piece of the puzzle - when everything works, you'll see
-what the device has been hiding all along.
+what the device has been hiding all along. Use `--record stream.bin` to save the
+stream, then validate it with `tools/validate_stream.py`.
 
 ## Data Flow
 

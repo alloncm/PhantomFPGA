@@ -166,13 +166,14 @@ void PhantomFpgaViewer::signal_handler(int /* sig */)
 void PhantomFpgaViewer::usage(const char* prog)
 {
 	fprintf(stderr,
-		"Usage: %s [host] [port]\n"
+		"Usage: %s [options] [host] [port]\n"
 		"\n"
 		"Connect to a PhantomFPGA server and display ASCII animation.\n"
 		"\n"
-		"  host    Server hostname (default: localhost)\n"
-		"  port    Server port (default: 5000)\n"
-		"  -h      Show this help\n"
+		"  host           Server hostname (default: localhost)\n"
+		"  port           Server port (default: 5000)\n"
+		"  --record FILE  Save raw frames to FILE for validation\n"
+		"  -h             Show this help\n"
 		"\n"
 		"Terminal must be at least %dx%d.\n",
 		prog, frame::COLS, frame::ROWS);
@@ -184,22 +185,41 @@ int PhantomFpgaViewer::parse_arguments(int argc, char* argv[],
 	host = "localhost";
 	port = 5000;
 
+	/* First pass: extract flags */
 	for (int i = 1; i < argc; i++) {
 		if (strcmp(argv[i], "-h") == 0 || strcmp(argv[i], "--help") == 0) {
 			usage(argv[0]);
 			return 1;
 		}
+		if (strcmp(argv[i], "--record") == 0) {
+			if (i + 1 >= argc) {
+				fprintf(stderr, "Error: --record requires a filename\n");
+				return -1;
+			}
+			record_path_ = argv[++i];
+		}
 	}
 
-	if (argc >= 2 && argv[1][0] != '-')
-		host = argv[1];
-
-	if (argc >= 3) {
-		port = atoi(argv[2]);
-		if (port < 1 || port > 65535) {
-			fprintf(stderr, "Error: invalid port %s\n", argv[2]);
-			return -1;
+	/* Second pass: positional args (skip consumed flags) */
+	int pos = 0;
+	for (int i = 1; i < argc; i++) {
+		if (strcmp(argv[i], "--record") == 0) {
+			i++; /* skip filename */
+			continue;
 		}
+		if (argv[i][0] == '-')
+			continue;
+
+		if (pos == 0)
+			host = argv[i];
+		else if (pos == 1) {
+			port = atoi(argv[i]);
+			if (port < 1 || port > 65535) {
+				fprintf(stderr, "Error: invalid port %s\n", argv[i]);
+				return -1;
+			}
+		}
+		pos++;
 	}
 
 	return 0;
@@ -250,6 +270,9 @@ int PhantomFpgaViewer::run(int argc, char* argv[])
 		"[*] Connecting to %s:%d...\n"
 		"[*] Make sure your terminal is at least %dx%d\n",
 		host.c_str(), port, frame::COLS, frame::ROWS);
+
+	if (!record_path_.empty())
+		fprintf(stderr, "[*] Recording to %s\n", record_path_.c_str());
 
 	if (!client_.connect(host, port))
 		return 1;

@@ -155,6 +155,7 @@ private:
  *   frame_buffer_  -- 5120-byte buffer for the current frame
  *   stats_         -- ViewerStats counters
  *   running_       -- false after Ctrl+C
+ *   record_path_   -- filename from --record flag (empty = no recording)
  */
 class PhantomFpgaViewer {
 public:
@@ -171,6 +172,7 @@ protected:
 	std::array<uint8_t, frame::SIZE> frame_buffer_;
 	ViewerStats stats_;
 	volatile bool running_ = true;
+	std::string record_path_;  /* --record filename, empty = no recording */
 
 	/* --- Pure virtual methods: implement in PhantomFpgaViewerImpl --- */
 

@@ -265,6 +265,8 @@ You've got the environment running. Now comes the actual learning:
 
 4. **Test your work**
    - Load driver, run server, connect viewer
+   - Use `--record stream.bin` to save frames, then validate:
+     `python3 tools/validate_stream.py stream.bin -v`
    - If you did everything right, you'll know
 
 ## C++ Crash Course (just enough to survive)
@@ -483,6 +485,10 @@ make
 
 # On your host - connect the viewer:
 ./viewer/phantomfpga_view localhost 5000
+
+# Or record the stream for validation:
+./viewer/phantomfpga_view localhost 5000 --record stream.bin
+python3 tools/validate_stream.py stream.bin -v
 ```
 
 And then... well. You'll see what you'll see. Or you won't, if something's broken. The device knows what it wants to show you. Your job is to let it.
