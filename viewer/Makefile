@@ -1,29 +1,30 @@
-# PhantomFPGA Viewer - ASCII Animation Terminal Client
+# PhantomFPGA Viewer - ASCII Animation Terminal Client (C++17)
 #
 # Simple build - no cross-compilation needed.
 # This runs on the host machine, not in the VM.
 
-CC ?= gcc
-CFLAGS = -Wall -Wextra -O2 -std=gnu11
+CXX ?= g++
+CXXFLAGS = -std=c++17 -Wall -Wextra -O2
 LDFLAGS =
 
 TARGET = phantomfpga_view
-SRCS = phantomfpga_view.c
-OBJS = $(SRCS:.c=.o)
+SRCS = phantomfpga_view.cpp phantomfpga_view_impl.cpp
+OBJS = $(SRCS:.cpp=.o)
+HDRS = $(wildcard *.h)
 
 .PHONY: all clean
 
 all: $(TARGET)
 
 $(TARGET): $(OBJS)
-	$(CC) $(LDFLAGS) -o $@ $^
+	$(CXX) $(LDFLAGS) -o $@ $^
 
-%.o: %.c
-	$(CC) $(CFLAGS) -c -o $@ $<
+%.o: %.cpp $(HDRS)
+	$(CXX) $(CXXFLAGS) -c -o $@ $<
 
 clean:
 	rm -f $(TARGET) $(OBJS)
 
 # For debugging
-debug: CFLAGS += -g -O0
+debug: CXXFLAGS += -g -O0
 debug: clean $(TARGET)

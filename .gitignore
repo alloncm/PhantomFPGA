@@ -33,7 +33,9 @@ driver/.tmp_versions/
 
 # Application build artifacts
 app/phantomfpga_app
+app/*.o
 viewer/phantomfpga_view
+viewer/*.o
 
 # Test artifacts
 tests/unit/*.o

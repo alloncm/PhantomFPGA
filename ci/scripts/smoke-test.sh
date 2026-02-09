@@ -173,22 +173,22 @@ check_app_source() {
 
     local app_dir="${PROJECT_ROOT}/app"
 
-    if [ ! -f "${app_dir}/phantomfpga_app.c" ]; then
+    if [ ! -f "${app_dir}/phantomfpga_app_impl.cpp" ]; then
         fail "App source not found"
         return
     fi
 
-    # Check CMakeLists.txt
-    if [ -f "${app_dir}/CMakeLists.txt" ]; then
-        pass "App CMakeLists.txt found"
+    # Check Makefile
+    if [ -f "${app_dir}/Makefile" ]; then
+        pass "App Makefile found"
     else
-        fail "App CMakeLists.txt missing"
+        fail "App Makefile missing"
     fi
 
     # Try to compile app
-    if command -v gcc &>/dev/null; then
+    if command -v g++ &>/dev/null; then
         local driver_dir="${PROJECT_ROOT}/driver"
-        if gcc -fsyntax-only -I"${driver_dir}" "${app_dir}/phantomfpga_app.c" 2>/dev/null; then
+        if g++ -std=c++17 -fsyntax-only -I"${driver_dir}" "${app_dir}/phantomfpga_app_impl.cpp" 2>/dev/null; then
             pass "App source syntax OK"
         else
             skip "App syntax check (may need headers)"

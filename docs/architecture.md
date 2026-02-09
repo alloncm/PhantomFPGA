@@ -150,7 +150,7 @@ The kernel module that interfaces with the device. Responsibilities:
 
 ### 3. Userspace Application (TCP Server)
 
-**Location:** `app/phantomfpga_app.c`
+**Location:** `app/phantomfpga_app_impl.cpp`
 
 > **Your job.** The skeleton handles argument parsing, TCP setup, and the main
 > loop structure. You implement the frame processing and validation.
@@ -170,7 +170,7 @@ The app runs inside the guest VM and listens on port 5000 for viewer connections
 
 ### 4. Terminal Viewer (TCP Client)
 
-**Location:** `viewer/phantomfpga_view.c`
+**Location:** `viewer/phantomfpga_view_impl.cpp`
 
 > **Your job.** The skeleton handles networking and terminal setup. You implement
 > the frame validation and display logic. This is the final piece of the puzzle.

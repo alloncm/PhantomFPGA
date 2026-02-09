@@ -1,10 +1,8 @@
-# PhantomFPGA Userspace Application
+# PhantomFPGA Userspace Application (C++17)
 #
 # Usage:
 #   make          - Build (auto-detects Buildroot cross-compiler)
 #   make clean    - Clean build artifacts
-#
-# Just one C file, one binary. No cmake needed.
 
 APP_DIR := $(shell dirname $(realpath $(lastword $(MAKEFILE_LIST))))
 PROJECT_ROOT := $(realpath $(APP_DIR)/..)
@@ -21,23 +19,28 @@ else
 endif
 
 TARGET_ARCH := $(if $(filter aarch64 arm64,$(HOST_ARCH)),aarch64,x86_64)
-BR_CC := $(BR_OUTPUT)/$(TARGET_ARCH)/host/bin/$(CROSS_PREFIX)gcc
+BR_CXX := $(BR_OUTPUT)/$(TARGET_ARCH)/host/bin/$(CROSS_PREFIX)g++
 
-# Use Buildroot compiler if available, otherwise host gcc
-CC := $(if $(wildcard $(BR_CC)),$(BR_CC),gcc)
+# Use Buildroot compiler if available, otherwise host g++
+CXX := $(if $(wildcard $(BR_CXX)),$(BR_CXX),g++)
 
-CFLAGS := -Wall -Wextra -O2 -I$(APP_DIR)/../driver
+CXXFLAGS := -std=c++17 -Wall -Wextra -O2 -I$(APP_DIR)/../driver
 LDFLAGS := -lpthread -lrt
 
 TARGET := phantomfpga_app
-SRC := phantomfpga_app.c
+SRCS := phantomfpga_app.cpp phantomfpga_app_impl.cpp
+OBJS := $(SRCS:.cpp=.o)
+HDRS := $(wildcard *.h) $(wildcard $(APP_DIR)/../driver/*.h)
 
 .PHONY: all clean
 
 all: $(TARGET)
 
-$(TARGET): $(SRC) $(wildcard $(APP_DIR)/../driver/*.h)
-	$(CC) $(CFLAGS) -o $@ $< $(LDFLAGS)
+$(TARGET): $(OBJS)
+	$(CXX) -o $@ $^ $(LDFLAGS)
+
+%.o: %.cpp $(HDRS)
+	$(CXX) $(CXXFLAGS) -c -o $@ $<
 
 clean:
-	rm -f $(TARGET)
+	rm -f $(TARGET) $(OBJS)

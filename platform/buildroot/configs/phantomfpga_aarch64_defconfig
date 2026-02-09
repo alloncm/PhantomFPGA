@@ -24,6 +24,7 @@ BR2_ARM64_PAGE_SIZE_4K=y
 # The Makefile may override this with Bootlin or system toolchain
 #------------------------------------------------------------------------------
 BR2_TOOLCHAIN_BUILDROOT_GLIBC=y
+BR2_INSTALL_LIBSTDCPP=y
 BR2_KERNEL_HEADERS_6_6=y
 
 #------------------------------------------------------------------------------
@@ -58,7 +59,7 @@ BR2_PACKAGE_KMOD_TOOLS=y
 BR2_PACKAGE_STRACE=y
 BR2_PACKAGE_FILE=y
 BR2_PACKAGE_LESS=y
-# Note: gdbserver provided via overlay (static binary, no C++ needed)
+# Note: gdbserver provided via overlay (static binary)
 
 # Editor and terminal multiplexer
 BR2_PACKAGE_VIM=y

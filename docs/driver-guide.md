@@ -991,7 +991,7 @@ cd /mnt/tests/integration
 
 Once your driver is working:
 
-1. **Implement the userspace app** - Complete the TODOs in `app/phantomfpga_app.c`
+1. **Implement the userspace app** - Complete the TODOs in `app/phantomfpga_app_impl.cpp`
 2. **Add error handling** - Test with fault injection
 3. **Optimize performance** - Profile with `perf`
 4. **Add sysfs interface** - Expose configuration via /sys

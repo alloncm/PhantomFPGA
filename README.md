@@ -255,17 +255,188 @@ You've got the environment running. Now comes the actual learning:
    - Look for `/* TODO: ... */` comments - they tell you exactly what to implement
    - Follow the detailed guide in `docs/driver-guide.md`
 
-2. **Complete the server app** in `app/phantomfpga_app.c`
+2. **Complete the server app** in `app/phantomfpga_app_impl.cpp`
    - Same deal - find the TODOs, implement them
    - This one streams frames over TCP to whoever wants them
 
-3. **Complete the viewer** in `viewer/phantomfpga_view.c`
+3. **Complete the viewer** in `viewer/phantomfpga_view_impl.cpp`
    - Connects to the server, displays... whatever it is
    - The final piece of the puzzle
 
 4. **Test your work**
    - Load driver, run server, connect viewer
    - If you did everything right, you'll know
+
+## C++ Crash Course (just enough to survive)
+
+The app and viewer are written in C++17. If you're coming from C (or if your C++
+knowledge stopped at `cout << "hello"` in college), here's what you actually need
+to know. This isn't a C++ textbook -- just the concepts you'll use in the TODO
+methods.
+
+### Classes and Inheritance
+
+The codebase uses a base class + derived class pattern. The base class (provided)
+defines pure virtual methods. You implement them in the derived class (your file).
+
+```cpp
+class PhantomFpgaApp {                 // Base class -- don't touch
+    virtual int open_device() = 0;     // "= 0" means you MUST implement this
+};
+
+class PhantomFpgaAppImpl : public PhantomFpgaApp {  // Your class
+    int open_device() override {       // "override" = compiler checks you got the
+        /* your code */                //   signature right. Use it. Always.
+    }
+};
+```
+
+You access base class members with the usual dot syntax: `config_.frame_rate`,
+`stats_.frames_received`, `dev_fd_.get()`. They're `protected`, which means
+your derived class can use them but nobody else can.
+
+### RAII (Resource Acquisition Is Initialization)
+
+The single most important C++ concept you'll use. RAII means: when you create an
+object, it acquires a resource. When the object goes out of scope, it releases it.
+No `goto cleanup`. No `free()` you might forget.
+
+```cpp
+// C way -- hope you remember to close() on every error path:
+int fd = open("/dev/phantomfpga0", O_RDWR);
+// ... 50 lines of code with 4 error paths ...
+close(fd);  // did you close() in all the error paths? really?
+
+// C++ way -- FileDescriptor closes automatically when it's destroyed:
+dev_fd_ = FileDescriptor(fd);
+// When dev_fd_ goes out of scope (or gets reassigned), close() happens.
+// Even if an error occurs. Even if you forget. The destructor has your back.
+```
+
+The codebase has two RAII wrappers:
+- **`FileDescriptor`** -- wraps a file descriptor, calls `close()` on destruction
+- **`MappedMemory`** -- wraps an `mmap()` region, calls `munmap()` on destruction
+
+### Move Semantics
+
+RAII wrappers are *move-only*. You can't copy a file descriptor (that would mean
+two owners trying to close the same fd). You transfer ownership instead:
+
+```cpp
+int fd = ::open(DEVICE_PATH, O_RDWR);
+dev_fd_ = FileDescriptor(fd);   // fd is now owned by dev_fd_
+// Don't use the raw fd anymore -- dev_fd_ owns it now.
+
+void* addr = mmap(...);
+buffer_pool_ = MappedMemory(addr, size);  // same idea
+```
+
+The `=` here triggers a *move assignment* -- ownership transfers from the
+temporary object on the right to the member on the left. The old value (if any)
+gets cleaned up automatically.
+
+### Smart Pointers (std::unique_ptr)
+
+`std::unique_ptr` is RAII for heap-allocated objects. It owns the pointer and
+deletes it when it goes out of scope. You'll see it for the TCP server:
+
+```cpp
+std::unique_ptr<TcpServer> tcp_server_;  // might be nullptr
+
+// Use it like a regular pointer, but check for null first:
+if (tcp_server_)                          // null check (same as != nullptr)
+    tcp_server_->try_accept();            // arrow operator, just like C pointers
+```
+
+You don't need to create or delete these yourself -- just use the ones the
+base class gives you.
+
+### std::array
+
+`std::array<uint8_t, 5120>` is a fixed-size array that knows its own size and
+doesn't decay to a pointer when you sneeze at it.
+
+```cpp
+std::array<uint8_t, frame::SIZE> frame_buffer_;
+
+frame_buffer_.data()    // raw uint8_t* pointer (like &arr[0] in C)
+frame_buffer_.size()    // 5120 (always, unlike C arrays in function params)
+frame_buffer_[42]       // element access, same as C
+```
+
+### Namespaces and constexpr
+
+Constants are organized in namespaces instead of `#define` macros:
+
+```cpp
+namespace frame {
+    constexpr uint32_t MAGIC = 0xF00DFACE;  // compile-time constant
+    constexpr size_t   SIZE  = 5120;
+}
+
+// Use them with the :: scope operator:
+if (hdr->magic == frame::MAGIC) { ... }
+```
+
+`constexpr` means "evaluate at compile time" -- like `#define` but type-safe
+and debugger-friendly.
+
+### Static Methods
+
+`CRC32::compute()` is a static method -- you call it on the class, not on an
+instance. Think of it as a namespaced function:
+
+```cpp
+uint32_t crc = CRC32::compute(data, len);  // no CRC32 object needed
+```
+
+### Calling C functions from C++
+
+Sometimes you need to call plain C functions like `open()`, `ioctl()`, or
+`mmap()`. Use the `::` prefix to call the global (C) version explicitly:
+
+```cpp
+int fd = ::open(DEVICE_PATH, O_RDWR);  // :: = global scope
+```
+
+The `::` isn't always required, but it makes it clear you're calling the C
+library function, not some method on the current class.
+
+### Pointer Casting
+
+To interpret raw bytes as a struct (like reading a frame header):
+
+```cpp
+auto* hdr = reinterpret_cast<const FrameHeader*>(frame_buffer_.data());
+// Or the C way -- still works, still fine for this:
+auto* hdr = (const FrameHeader*)frame_buffer_.data();
+```
+
+Both work. The C++ cast is more explicit about what it's doing. Use whichever
+doesn't make your eyes bleed.
+
+### Zero-Initialization
+
+C++ structs can be zero-initialized with `= {}`:
+
+```cpp
+struct phantomfpga_config cfg = {};  // all fields zeroed
+cfg.desc_count = config_.desc_count;
+cfg.frame_rate = config_.frame_rate;
+```
+
+### That's it
+
+If you know the above, you can complete every TODO in the codebase. You
+just fill in the methods with straightforward logic -- mostly the same
+POSIX calls you'd write in C, wrapped in slightly nicer containers.
+
+That said -- don't treat the base classes as black boxes. Read the headers
+(`phantomfpga_app.h`, `phantomfpga_view.h`) and the `.cpp` files that go
+with them. They're full of the patterns listed above, and seeing how RAII
+wrappers, move semantics, and class design work in real code is worth more
+than any tutorial. The best way to learn C++ is to read C++ that actually
+does something useful.
 
 ## Documentation
 
