@@ -12,36 +12,36 @@ No expensive hardware needed. No wiring and HW setup time. Just pure learning.
 And when you're done? Well. Let's just say the device is trying to tell you something. At 25 frames per second. What is it? You'll find out when your driver works.
 
 ```
-              +------------- Host Machine -------------+
-              |                                        |
-              |   +------------------------------+     |
-              |   |       phantomfpga_view       |     |
-              |   |       (Terminal Viewer)      | <-- The big reveal
-              |   +------------------------------+     |
-              |                  ^                     |
-              +------------------|----- TCP :5000 -----+
-                                 |
-              +------------------|----- QEMU VM -------+
-              |                  |                     |
-              |   +------------------------------+     |
-              |   |       phantomfpga_app        | <-- Streams over TCP
-              |   +------------------------------+     |
-              |                  |                     |
-              |   +------------------------------+     |
-              |   |    Your Kernel Driver        | <-- This is where the magic happens
-              |   |    (phantomfpga_drv.ko)      |     |
-              |   +------------------------------+     |
-              |                  |                     |
-              |   +------------------------------+     |
-              |   |        Linux Kernel          | <-- The scary part (we'll help)
-              |   +------------------------------+     |
-              |                  |                     |
-              |   +------------------------------+     |
-              |   |     PhantomFPGA Device       | <-- Hiding something...
-              |   |     (Emulated PCIe FPGA)     |     |
-              |   +------------------------------+     |
-              |                                        |
-              +----------------------------------------+
++------------- Host Machine -------------+
+|                                        |
+|   +------------------------------+     |
+|   |       phantomfpga_view       |     |
+|   |       (Terminal Viewer)      | <-- The big reveal
+|   +------------------------------+     |
+|                  ^                     |
++------------------|----- TCP :5000 -----+
+                   |
++------------------|----- QEMU VM -------+
+|                  |                     |
+|   +------------------------------+     |
+|   |       phantomfpga_app        | <-- Streams over TCP
+|   +------------------------------+     |
+|                  |                     |
+|   +------------------------------+     |
+|   |    Your Kernel Driver        | <-- This is where the magic happens
+|   |    (phantomfpga_drv.ko)      |     |
+|   +------------------------------+     |
+|                  |                     |
+|   +------------------------------+     |
+|   |        Linux Kernel          | <-- The scary part (we'll help)
+|   +------------------------------+     |
+|                  |                     |
+|   +------------------------------+     |
+|   |     PhantomFPGA Device       | <-- Hiding something...
+|   |     (Emulated PCIe FPGA)     |     |
+|   +------------------------------+     |
+|                                        |
++----------------------------------------+
 ```
 
 ## What Is This Thing?
