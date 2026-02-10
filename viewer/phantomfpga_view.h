@@ -3,7 +3,7 @@
  * PhantomFPGA Viewer v3.0 - C++ Edition
  *
  * TCP client that connects to the PhantomFPGA app server and displays
- * ASCII animation frames in the terminal.
+ * ASCII frames in the terminal.
  *
  * Architecture:
  *   PhantomFpgaViewer (base)  -- provided infrastructure (don't touch)

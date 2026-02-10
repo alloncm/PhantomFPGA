@@ -1,11 +1,9 @@
 /*
- * PhantomFPGA QEMU Device Definitions - v3.0 ASCII Animation Edition
+ * PhantomFPGA QEMU Device Definitions - v3.0
  *
- * A virtual FPGA device that streams pre-built ASCII animation frames.
+ * A virtual FPGA device that streams pre-built data frames via SG-DMA.
  * The trainee's mission: build a driver, stream frames over TCP,
- * watch a cartoon play in the terminal.
- *
- * "Because nothing says 'I learned DMA' like ASCII art."
+ * and display them on the host.
  *
  * SPDX-License-Identifier: GPL-2.0-or-later
  */
@@ -25,7 +23,7 @@
 #define PHANTOMFPGA_VENDOR_ID       0x0DAD
 #define PHANTOMFPGA_DEVICE_ID       0xF00D
 #define PHANTOMFPGA_SUBSYS_VENDOR   0x0DAD
-#define PHANTOMFPGA_SUBSYS_ID       0x0003       /* ASCII Animation edition */
+#define PHANTOMFPGA_SUBSYS_ID       0x0003       /* v3.0 edition */
 #define PHANTOMFPGA_REVISION        0x03         /* v3.0 */
 
 /* ------------------------------------------------------------------------ */
@@ -35,7 +33,7 @@
 #define PHANTOMFPGA_BAR0_SIZE       4096
 #define PHANTOMFPGA_FRAME_MAGIC     0xF00DFACE   /* New magic for frames */
 #define PHANTOMFPGA_DEV_ID_VAL      0xF00DFACE
-#define PHANTOMFPGA_DEV_VER         0x00030000   /* v3.0.0 - ASCII Animation */
+#define PHANTOMFPGA_DEV_VER         0x00030000   /* v3.0.0 */
 #define PHANTOMFPGA_MSIX_VECTORS    3            /* Complete, error, no_desc */
 
 /* Frame constants - from frames_data.h */
@@ -46,7 +44,7 @@
 #define PHANTOMFPGA_FRAME_COLS      110
 
 /* Default values */
-#define PHANTOMFPGA_DEFAULT_FRAME_RATE  25       /* 25 fps - smooth animation */
+#define PHANTOMFPGA_DEFAULT_FRAME_RATE  25       /* 25 fps */
 #define PHANTOMFPGA_DEFAULT_DESC_COUNT  256
 #define PHANTOMFPGA_DEFAULT_IRQ_COUNT   8
 #define PHANTOMFPGA_DEFAULT_IRQ_TIMEOUT 40000    /* 40ms = 1 frame at 25fps */
@@ -59,7 +57,7 @@
 #define PHANTOMFPGA_MAX_DESC_COUNT      4096
 
 /* ------------------------------------------------------------------------ */
-/* Register Offsets - Simplified for Animation                              */
+/* Register Offsets                                                         */
 /* ------------------------------------------------------------------------ */
 
 /* Identification & Control */

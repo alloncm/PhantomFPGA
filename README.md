@@ -207,6 +207,18 @@ Login as `root` with password `root`.
 > - Open the VM in a **separate terminal tab or window**. You'll be switching between your host (for editing code, building) and the VM (for testing) constantly. Having them side by side is a game changer.
 > - If you're not a terminal ninja yet, try `mc` (Midnight Commander) - it's a file manager that runs in the terminal. Already installed in the VM. Type `mc` to launch it, `exit` to quit. Pro tip: `Ctrl+O` toggles between the `mc` panels and a regular terminal - super handy for running commands without leaving `mc`.
 
+**Passwordless login:**
+
+In case you `ssh` a lot into the VM, you may want to stop entring the password every time. You can do that following these steps on the host (make sure the QEMU VM is running):
+```bash
+ssh-keygen -t rsa -f ~/.ssh/id_rsa_dropbear   # Create an SSH key for this target
+cat ~/.ssh/id_rsa_dropbear.pub | ssh root@localhost -p 2222 'mkdir -p ~/.ssh && cat >> ~/.ssh/authorized_keys'
+ssh root@localhost -p 2222 'chmod 700 ~/.ssh && chmod 600 ~/.ssh/authorized_keys'
+
+# From now on, you'll ssh into the VM passwordless with:
+ssh -i ~/.ssh/id_rsa_dropbear root@localhost -p 2222
+```
+
 ### Step 5: Verify the Device is There
 
 Inside the VM, run:

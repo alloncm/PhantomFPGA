@@ -1,14 +1,12 @@
 // SPDX-License-Identifier: GPL-2.0
 /*
- * PhantomFPGA PCIe Driver v3.0 - ASCII Animation Edition
+ * PhantomFPGA PCIe Driver v3.0
  *
  * A Linux kernel driver for the PhantomFPGA virtual PCI device.
  * This skeleton provides the structure - you fill in the TODOs!
  *
- * v3.0 streams pre-built ASCII animation frames. Build a driver, stream
- * frames over TCP, watch a cartoon play in your terminal.
- *
- * "Because nothing says 'I learned DMA' like ASCII art."
+ * v3.0 streams pre-built data frames via scatter-gather DMA.
+ * Build a driver, stream frames over TCP, display them on the host.
  *
  * Learning objectives:
  *   - PCI device probing and BAR mapping
@@ -47,7 +45,7 @@
 
 /* Module metadata */
 MODULE_AUTHOR("Trainee");
-MODULE_DESCRIPTION("PhantomFPGA v3.0 ASCII Animation Streaming Driver");
+MODULE_DESCRIPTION("PhantomFPGA v3.0 Frame Streaming Driver");
 MODULE_LICENSE("GPL");
 MODULE_VERSION("3.0");
 

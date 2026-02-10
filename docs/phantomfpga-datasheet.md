@@ -2,10 +2,7 @@
 
 > "This is where the rubber meets the road. Or rather, where your code meets the hardware."
 
-This document is your complete reference for the PhantomFPGA virtual PCIe device.
-It covers how the device works, what it does, and every register you need to
-control it. Keep this open while you're coding - you'll refer to it approximately
-47 times per implementation session.
+This document is your complete reference for the PhantomFPGA virtual PCIe device. It covers how the device works, what it does, and every register you need to control it. Keep this open while you're coding - you'll refer to it approximately 47 times per implementation session.
 
 (That number is made up. The real number is probably higher.)
 
@@ -13,9 +10,7 @@ control it. Keep this open while you're coding - you'll refer to it approximatel
 
 ## Device Overview
 
-PhantomFPGA is a PCIe device that streams fixed-size data frames to host memory
-via scatter-gather DMA. Think of it as a data firehose: the device has data it
-wants to send you, and your job is to catch it.
+PhantomFPGA is a PCIe device that streams fixed-size data frames to host memory via scatter-gather DMA. Think of it as a data firehose: the device has data it wants to send you, and your job is to catch it.
 
 ### Block Diagram
 
@@ -66,9 +61,7 @@ wants to send you, and your job is to catch it.
 
 ### Frame Transmission
 
-The device contains 250 pre-loaded data frames, each exactly 5120 bytes. When
-you start the device (set CTRL.RUN), it begins transmitting these frames in
-order, looping back to frame 0 after frame 249.
+The device contains 250 pre-loaded data frames, each exactly 5120 bytes. When you start the device (set CTRL.RUN), it begins transmitting these frames in order, looping back to frame 0 after frame 249.
 
 **Transmission timing:**
 
@@ -81,15 +74,11 @@ Time:  0ms     40ms    80ms    120ms   160ms   ...
 Frame: [0]     [1]     [2]     [3]     [4]     ...
 ```
 
-Each frame is transmitted atomically - the device doesn't send partial frames.
-If a descriptor isn't available when it's time to send, the frame is dropped
-(not queued).
+Each frame is transmitted atomically - the device doesn't send partial frames. If a descriptor isn't available when it's time to send, the frame is dropped (not queued).
 
 ### The Descriptor Ring
 
-Instead of giving the device one big buffer, you give it a list of smaller
-buffers via a "descriptor ring". Each descriptor says: "here's a buffer at
-address X with size Y, put a frame there."
+Instead of giving the device one big buffer, you give it a list of smaller buffers via a "descriptor ring". Each descriptor says: "here's a buffer at address X with size Y, put a frame there."
 
 The ring is managed with two indices:
 - **HEAD** (driver writes): "I've prepared descriptors up to here"
@@ -107,10 +96,7 @@ Ring state:  [completed] [completed] [pending] [pending] [free] [free]
 
 ### Backpressure and Drops
 
-Real hardware doesn't wait. If the device has a frame ready and you haven't
-given it a descriptor to use, the frame is dropped. This mimics real streaming
-devices (cameras, network cards, sensors) where data keeps coming whether
-you're ready or not.
+Real hardware doesn't wait. If the device has a frame ready and you haven't given it a descriptor to use, the frame is dropped. This mimics real streaming devices (cameras, network cards, sensors) where data keeps coming whether you're ready or not.
 
 ```
 Device: "Frame 42 ready... any descriptors? No? *drops* Frame 43 ready..."
@@ -128,8 +114,7 @@ IRQ_STATUS.NO_DESC is set (triggers interrupt if enabled).
 
 Without coalescing: 25 fps = 25 interrupts/second. That's fine for a demo.
 
-With coalescing: batch completions before firing. "Tell me after 8 frames OR
-40ms, whichever comes first." Reduces interrupt overhead significantly.
+With coalescing: batch completions before firing. "Tell me after 8 frames OR 40ms, whichever comes first." Reduces interrupt overhead significantly.
 
 ```
 Coalescing disabled:    IRQ IRQ IRQ IRQ IRQ IRQ IRQ IRQ  (8 IRQs)
@@ -285,8 +270,7 @@ All registers are 32-bit and must be accessed with 32-bit aligned reads/writes.
 +----------------------------------+
 ```
 
-Always returns `0xF00DFACE`. Use this to verify the device is present
-and responding correctly during probe.
+Always returns `0xF00DFACE`. Use this to verify the device is present and responding correctly during probe.
 
 ---
 
@@ -330,16 +314,11 @@ Current value: `0x00030000` = version 3.0.0
 | 2 | IRQ_EN | R/W | Global interrupt enable |
 | 31:3 | Reserved | - | Always 0 |
 
-**RUN (bit 0):** Setting this starts the transmission engine. The device will
-begin sending frames at the configured rate, using whatever descriptors are
-available. Clear to stop. STATUS.RUNNING reflects actual state.
+**RUN (bit 0):** Setting this starts the transmission engine. The device will begin sending frames at the configured rate, using whatever descriptors are available. Clear to stop. STATUS.RUNNING reflects actual state.
 
-**RESET (bit 1):** Writing 1 triggers a soft reset. This bit auto-clears.
-Reset stops transmission, clears HEAD/TAIL indices, resets all counters,
-and restores default configuration. The descriptor ring address is preserved.
+**RESET (bit 1):** Writing 1 triggers a soft reset. This bit auto-clears. Reset stops transmission, clears HEAD/TAIL indices, resets all counters, and restores default configuration. The descriptor ring address is preserved.
 
-**IRQ_EN (bit 2):** Global interrupt enable. When clear, no MSI-X interrupts
-are delivered regardless of IRQ_STATUS and IRQ_MASK settings.
+**IRQ_EN (bit 2):** Global interrupt enable. When clear, no MSI-X interrupts are delivered regardless of IRQ_STATUS and IRQ_MASK settings.
 
 ---
 
@@ -361,9 +340,7 @@ are delivered regardless of IRQ_STATUS and IRQ_MASK settings.
 | 2 | ERROR | Error condition (DMA failure, config error) |
 | 31:3 | Reserved | Always 0 |
 
-**DESC_EMPTY** means the device has more frames to send but you haven't given
-it anywhere to put them. If this stays set while RUNNING, you're dropping
-frames - check STAT_FRAMES_DROP.
+**DESC_EMPTY** means the device has more frames to send but you haven't given it anywhere to put them. If this stays set while RUNNING, you're dropping frames - check STAT_FRAMES_DROP.
 
 ---
 
@@ -378,8 +355,7 @@ frames - check STAT_FRAMES_DROP.
 +----------------------------------+
 ```
 
-Fixed at 5120 bytes. This is the size of each frame the device transmits.
-Read-only because you can't change reality.
+Fixed at 5120 bytes. This is the size of each frame the device transmits. Read-only because you can't change reality.
 
 ---
 
@@ -394,8 +370,7 @@ Read-only because you can't change reality.
 +----------------------------------+
 ```
 
-Total number of frames available in the device. The device loops through
-these continuously - after frame 249 comes frame 0 again.
+Total number of frames available in the device. The device loops through these continuously - after frame 249 comes frame 0 again.
 
 ---
 
@@ -420,8 +395,7 @@ Target frame transmission rate in frames per second.
 
 Can be changed while running - takes effect on next frame interval.
 
-**Pro tip:** If you're seeing dropped frames, lowering this might help. Unless
-your driver is the problem, in which case... fix your driver.
+**Pro tip:** If you're seeing dropped frames, lowering this might help. Unless your driver is the problem, in which case... fix your driver.
 
 ---
 
@@ -436,8 +410,7 @@ your driver is the problem, in which case... fix your driver.
 +----------------------------------+
 ```
 
-The frame index currently being transmitted. Wraps from 249 back to 0.
-Useful for debugging "is this thing even running?"
+The frame index currently being transmitted. Wraps from 249 back to 0. Useful for debugging "is this thing even running?"
 
 ---
 
@@ -452,8 +425,7 @@ Useful for debugging "is this thing even running?"
 +----------------------------------+
 ```
 
-Lower 32 bits of the descriptor ring physical address. Must be 32-byte aligned
-(descriptors are 32 bytes each).
+Lower 32 bits of the descriptor ring physical address. Must be 32-byte aligned (descriptors are 32 bytes each).
 
 ---
 
@@ -468,8 +440,7 @@ Lower 32 bits of the descriptor ring physical address. Must be 32-byte aligned
 +----------------------------------+
 ```
 
-Upper 32 bits for 64-bit physical addresses. Set to 0 if your addresses fit
-in 32 bits.
+Upper 32 bits for 64-bit physical addresses. Set to 0 if your addresses fit in 32 bits.
 
 **Setting the ring address:**
 ```c
@@ -499,11 +470,9 @@ Number of descriptors in the ring.
 | Maximum | 4096 |
 | Default | 256 |
 
-**Must be a power of 2** for efficient index wrapping. Non-power-of-2 values
-are rounded down to the nearest power of 2.
+**Must be a power of 2** for efficient index wrapping. Non-power-of-2 values are rounded down to the nearest power of 2.
 
-Set this before starting transmission. The ring must have at least this many
-valid descriptor entries, each pointing to a buffer >= FRAME_SIZE bytes.
+Set this before starting transmission. The ring must have at least this many valid descriptor entries, each pointing to a buffer >= FRAME_SIZE bytes.
 
 ---
 
@@ -518,9 +487,7 @@ valid descriptor entries, each pointing to a buffer >= FRAME_SIZE bytes.
 +----------------------------------+
 ```
 
-Write this to submit descriptors to the device. When you've prepared
-descriptors N through M-1, write M here. The device will process all
-descriptors from TAIL up to (but not including) HEAD.
+Write this to submit descriptors to the device. When you've prepared descriptors N through M-1, write M here. The device will process all descriptors from TAIL up to (but not including) HEAD.
 
 Range: 0 to ring_size - 1 (wraps automatically via modulo)
 
@@ -547,8 +514,7 @@ pfpga_write32(pfdev, PHANTOMFPGA_REG_DESC_HEAD, (next + 1) & (ring_size - 1));
 +----------------------------------+
 ```
 
-The device updates this after completing each descriptor. When TAIL advances,
-it means frames have been written to your buffers.
+The device updates this after completing each descriptor. When TAIL advances, it means frames have been written to your buffers.
 
 **Processing completions:**
 ```c
@@ -581,8 +547,7 @@ while (pfdev->last_tail != tail) {
 | 2 | NO_DESC | Frame dropped - no descriptor available |
 | 31:3 | Reserved | Always 0 |
 
-**Write-1-to-Clear (W1C):** Write a 1 to a bit position to clear that bit.
-Writing 0 has no effect.
+**Write-1-to-Clear (W1C):** Write a 1 to a bit position to clear that bit. Writing 0 has no effect.
 
 ---
 
@@ -631,9 +596,7 @@ An interrupt is delivered only when:
 
 **How coalescing works:**
 
-Without coalescing, you get an interrupt for every completed descriptor.
-At 25 fps, that's 25 interrupts per second - fine for a demo, brutal in
-production.
+Without coalescing, you get an interrupt for every completed descriptor. At 25 fps, that's 25 interrupts per second - fine for a demo, brutal in production.
 
 With coalescing, the device batches completions:
 - **Count mode:** Wait until N descriptors complete, then fire
@@ -661,10 +624,7 @@ Running count of frames successfully DMA'd to host memory since last reset.
 
 **Read-only**
 
-Frames the device wanted to send but couldn't because no descriptors were
-available. If this number is growing, you're not submitting descriptors fast
-enough. Either increase your ring size, lower the frame rate, or fix your
-driver's latency.
+Frames the device wanted to send but couldn't because no descriptors were available. If this number is growing, you're not submitting descriptors fast enough. Either increase your ring size, lower the frame rate, or fix your driver's latency.
 
 ---
 
@@ -672,8 +632,7 @@ driver's latency.
 
 **Read-only**
 
-64-bit counter of total bytes transferred. At 5120 bytes/frame and 25fps,
-this overflows a 32-bit counter in about 9 hours. Hence the 64-bit version.
+64-bit counter of total bytes transferred. At 5120 bytes/frame and 25fps, this overflows a 32-bit counter in about 9 hours. Hence the 64-bit version.
 
 ---
 
@@ -681,8 +640,7 @@ this overflows a 32-bit counter in about 9 hours. Hence the 64-bit version.
 
 **Read-only**
 
-Total number of descriptors the device has completed. Should equal
-STAT_FRAMES_TX (one descriptor per frame in normal operation).
+Total number of descriptors the device has completed. Should equal STAT_FRAMES_TX (one descriptor per frame in normal operation).
 
 ---
 
@@ -690,8 +648,7 @@ STAT_FRAMES_TX (one descriptor per frame in normal operation).
 
 **Read-only**
 
-DMA errors, timeout errors, anything that went wrong. Non-zero here means
-check your buffer addresses and sizes.
+DMA errors, timeout errors, anything that went wrong. Non-zero here means check your buffer addresses and sizes.
 
 ---
 
@@ -733,11 +690,9 @@ Enable these to test your error handling:
 +----------------------------------+
 ```
 
-Probability of fault injection: approximately 1 in N frames affected.
-Default 1000 = roughly 0.1% of frames corrupted when faults enabled.
+Probability of fault injection: approximately 1 in N frames affected. Default 1000 = roughly 0.1% of frames corrupted when faults enabled.
 
-Set to lower values for more aggressive testing. Set to 0 to disable
-probability check (every frame affected - chaotic mode).
+Set to lower values for more aggressive testing. Set to 0 to disable probability check (every frame affected - chaotic mode).
 
 ---
 
@@ -767,11 +722,9 @@ Offset  Size   Field        Description
 | 3 | IRQ | Request interrupt on completion |
 | 4 | STOP | Stop after this descriptor |
 
-**COMPLETED:** You clear this when setting up the descriptor. The device sets
-it when done. Check this to confirm completion (in addition to TAIL movement).
+**COMPLETED:** You clear this when setting up the descriptor. The device sets it when done. Check this to confirm completion (in addition to TAIL movement).
 
-**IRQ:** Set this if you want an interrupt specifically for this descriptor.
-Combined with coalescing, lets you control exactly when you wake up.
+**IRQ:** Set this if you want an interrupt specifically for this descriptor. Combined with coalescing, lets you control exactly when you wake up.
 
 ### C Structure
 
@@ -789,8 +742,7 @@ struct phantomfpga_sg_desc {
 
 ## Completion Writeback
 
-When a descriptor completes, the device writes a 16-byte completion structure
-at the END of the destination buffer (buffer + length - 16):
+When a descriptor completes, the device writes a 16-byte completion structure at the END of the destination buffer (buffer + length - 16):
 
 ```
 Offset  Size   Field          Description
@@ -812,10 +764,7 @@ struct phantomfpga_completion {
 } __packed;
 ```
 
-**Buffer size:** Your buffers must be at least frame_size + 16 bytes to
-accommodate both the frame data and the completion writeback. Or allocate
-frame_size and read completion from descriptor ring (device updates control
-field with completion status).
+**Buffer size:** Your buffers must be at least frame_size + 16 bytes to accommodate both the frame data and the completion writeback. Or allocate frame_size and read completion from descriptor ring (device updates control field with completion status).
 
 ---
 
@@ -848,8 +797,7 @@ struct phantomfpga_frame_header {
 
 ### CRC-32
 
-The device uses IEEE 802.3 (Ethernet) CRC-32, polynomial 0xEDB88320.
-The CRC covers bytes 0 through 5115 (everything except the CRC itself).
+The device uses IEEE 802.3 (Ethernet) CRC-32, polynomial 0xEDB88320. The CRC covers bytes 0 through 5115 (everything except the CRC itself).
 
 **Validation pseudocode:**
 ```c

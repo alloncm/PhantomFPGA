@@ -3,13 +3,9 @@
 > "Any sufficiently advanced emulation is indistinguishable from real hardware bugs."
 > - Somebody, probably
 
-This document explains how all the pieces of PhantomFPGA fit together. If you're
-the type who likes to understand the full picture before diving in, this is for you.
-If you prefer to just start coding and figure it out later... well, you'll probably
-end up here eventually anyway.
+This document explains how all the pieces of PhantomFPGA fit together. If you're the type who likes to understand the full picture before diving in, this is for you. If you prefer to just start coding and figure it out later... well, you'll probably end up here eventually anyway.
 
-> **New to kernel development?** Check the **[Glossary](glossary.md)** for quick
-> explanations of terms like PCIe, DMA, BAR, MSI-X, and other jargon.
+> **New to kernel development?** Check the **[Glossary](glossary.md)** for quick explanations of terms like PCIe, DMA, BAR, MSI-X, and other jargon.
 
 ## System Overview
 
@@ -71,8 +67,7 @@ end up here eventually anyway.
 
 **Location:** `platform/qemu/src/hw/misc/phantomfpga.c`
 
-> **Already implemented.** This component is complete and ready to use. You don't
-> need to modify it - just understand how it works so you can write the driver.
+> **Already implemented.** This component is complete and ready to use. You don't need to modify it - just understand how it works so you can write the driver.
 
 The virtual PCIe device that simulates an FPGA frame producer. Key features:
 
@@ -106,8 +101,7 @@ When running, the device:
 
 **Location:** `driver/phantomfpga_drv.c`
 
-> **Your job.** The skeleton is there with detailed TODOs. See the
-> [Driver Guide](driver-guide.md) for step-by-step instructions.
+> **Your job.** The skeleton is there with detailed TODOs. See the [Driver Guide](driver-guide.md) for step-by-step instructions.
 
 The kernel module that interfaces with the device. Responsibilities:
 
@@ -139,7 +133,7 @@ The kernel module that interfaces with the device. Responsibilities:
 |         |                      |                       |          |
 |         v                      v                       v          |
 |  +---------------------------------------------------------------+|
-|  |                  struct phantomfpga_dev                       ||
+|  |                    struct phantomfpga_dev                       ||
 |  |  - pdev (PCI device)        - cdev (char device)              ||
 |  |  - regs (BAR0 mapping)      - dma_buf (DMA buffer)            ||
 |  |  - lock (spinlock)          - wait_queue                      ||
@@ -152,8 +146,7 @@ The kernel module that interfaces with the device. Responsibilities:
 
 **Location:** `app/phantomfpga_app_impl.cpp`
 
-> **Your job.** The skeleton handles argument parsing, TCP setup, and the main
-> loop structure. You implement the frame processing and validation.
+> **Your job.** The skeleton handles argument parsing, TCP setup, and the main loop structure. You implement the frame processing and validation.
 
 The server application that bridges the driver and external viewers:
 
@@ -172,8 +165,7 @@ The app runs inside the guest VM and listens on port 5000 for viewer connections
 
 **Location:** `viewer/phantomfpga_view_impl.cpp`
 
-> **Your job.** The skeleton handles networking and terminal setup. You implement
-> the frame validation and display logic. This is the final piece of the puzzle.
+> **Your job.** The skeleton handles networking and terminal setup. You implement the frame validation and display logic. This is the final piece of the puzzle.
 
 A terminal-based client that runs on the host machine:
 
@@ -184,9 +176,7 @@ A terminal-based client that runs on the host machine:
 5. Tracks statistics (frame rate, dropped frames, etc.)
 6. Optionally records raw frames to disk (`--record`) for offline validation
 
-The viewer is the final piece of the puzzle - when everything works, you'll see
-what the device has been hiding all along. Use `--record stream.bin` to save the
-stream, then validate it with `tools/validate_stream.py`.
+The viewer is the final piece of the puzzle - when everything works, you'll see what the device has been hiding all along. Use `--record stream.bin` to save the stream, then validate it with `tools/validate_stream.py`.
 
 ## Data Flow
 
@@ -272,9 +262,7 @@ Userspace                    Kernel                      Device
 
 ## Ring Buffer Protocol
 
-The ring buffer is a circular queue with power-of-2 size for efficient
-index wrapping. If you've ever dealt with a circular parking garage,
-it's the same idea - except the cars are frames and nobody's honking.
+The ring buffer is a circular queue with power-of-2 size for efficient index wrapping. If you've ever dealt with a circular parking garage, it's the same idea - except the cars are frames and nobody's honking.
 
 ### Memory Layout
 
@@ -317,9 +305,7 @@ pending = 3
 
 ### Full vs Empty
 
-The ring keeps one slot empty to distinguish full from empty. Yes, we
-sacrifice one slot. It's a classic tradeoff - simpler code or more space.
-Simpler code won.
+The ring keeps one slot empty to distinguish full from empty. Yes, we sacrifice one slot. It's a classic tradeoff - simpler code or more space. Simpler code won.
 
 | Condition | Formula |
 |-----------|---------|
@@ -329,8 +315,7 @@ Simpler code won.
 
 ### Overrun Handling
 
-When the ring is full and the device tries to produce a new frame,
-things get ugly (but predictable):
+When the ring is full and the device tries to produce a new frame, things get ugly (but predictable):
 
 1. Device sets `STATUS_OVERRUN` flag
 2. Device increments `stat_overruns` counter
@@ -338,13 +323,11 @@ things get ugly (but predictable):
 4. Frame is **not** written (dropped)
 5. Producer index is **not** advanced
 
-The driver must consume frames faster to prevent overruns. The device
-will not wait for you. It has places to be.
+The driver must consume frames faster to prevent overruns. The device will not wait for you. It has places to be.
 
 ## MSI-X Interrupt Flow
 
-MSI-X is how the device taps the CPU on the shoulder without being rude.
-Two vectors, two reasons to interrupt your day.
+MSI-X is how the device taps the CPU on the shoulder without being rude. Two vectors, two reasons to interrupt your day.
 
 ### Vector Assignment
 
@@ -421,18 +404,15 @@ With coherent DMA (`dma_alloc_coherent`):
 - No cache flush/invalidate needed
 - Slightly slower than streaming DMA but simpler
 
-For mmap to userspace, use `dma_mmap_coherent()` or ensure
-`pgprot_noncached()` is applied.
+For mmap to userspace, use `dma_mmap_coherent()` or ensure `pgprot_noncached()` is applied.
 
 ## Concurrency Model
 
-Welcome to the fun part - making sure nothing explodes when multiple
-things happen at once. This is where bugs go to hide.
+Welcome to the fun part - making sure nothing explodes when multiple things happen at once. This is where bugs go to hide.
 
 ### Device-side
 
-The QEMU device runs in a single QEMU thread (main loop or dedicated vcpu).
-All register access is serialized by QEMU's memory region locking.
+The QEMU device runs in a single QEMU thread (main loop or dedicated vcpu). All register access is serialized by QEMU's memory region locking.
 
 ### Driver-side
 
@@ -478,8 +458,7 @@ driver/  <--- 9p mount --->  /mnt/driver
 app/     <--- 9p mount --->  /mnt/app
 ```
 
-Changes on the host are immediately visible in the guest (and vice versa).
-This allows editing code on the host and building in the guest.
+Changes on the host are immediately visible in the guest (and vice versa). This allows editing code on the host and building in the guest.
 
 ### SSH Access
 
@@ -512,15 +491,11 @@ Or: "Why is my frame rate not 10,000 fps?" - You, probably not.
 - MSI-X delivery adds latency vs polling
 - Guest CPU scheduling affects consumption rate
 
-PhantomFPGA defaults to 25 fps with 5120-byte frames - plenty for what it's
-trying to show you. You're learning, not trying to break speed records. Save
-that for when you have real hardware and a deadline.
+PhantomFPGA defaults to 25 fps with 5120-byte frames - plenty for what it's trying to show you. You're learning, not trying to break speed records. Save that for when you have real hardware and a deadline.
 
 ## Still With Me?
 
-If you made it this far, you now understand more about virtual device architecture
-than most people learn in their first year of embedded work. Give yourself a pat
-on the back. Or a coffee. Or both, you deserve it.
+If you made it this far, you now understand more about virtual device architecture than most people learn in their first year of embedded work. Give yourself a pat on the back. Or a coffee. Or both, you deserve it.
 
 ## Next Steps
 

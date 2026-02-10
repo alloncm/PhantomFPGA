@@ -3,7 +3,7 @@
  * PhantomFPGA Viewer - YOUR IMPLEMENTATION
  *
  * This is the file you need to edit. Implement the 7 TODO methods below
- * to receive, validate, display, and record ASCII animation frames.
+ * to receive, validate, display, and record frames from the device.
  *
  * Read phantomfpga_view.h for the class interface and frame constants.
  *
@@ -17,7 +17,7 @@
  *
  * Frame layout (frame::SIZE = 5120 bytes):
  *   Offset 0:    FrameHeader (16 bytes) -- magic, sequence, reserved
- *   Offset 16:   ASCII data (4995 bytes) -- the actual animation
+ *   Offset 16:   Payload (4995 bytes) -- frame data
  *   Offset 5116: CRC32 (4 bytes) -- IEEE 802.3
  *
  * Utility:
@@ -154,7 +154,7 @@ protected:
 	 * - stats_.crc_errors
 	 * - stats_.magic_errors
 	 *
-	 * Use fprintf(stderr, ...) so it doesn't interfere with the animation.
+	 * Use fprintf(stderr, ...) so it doesn't interfere with the display.
 	 */
 	void print_stats() override
 	{

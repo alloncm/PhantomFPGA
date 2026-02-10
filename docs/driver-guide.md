@@ -1,14 +1,10 @@
 # PhantomFPGA Driver Development Guide
 
-> "The best time to write a kernel driver was 10 years ago.
-> The second best time is now, with this guide in front of you."
+> "The best time to write a kernel driver was 10 years ago. The second best time is now, with this guide in front of you."
 
-Welcome to the fun part! This guide walks you through implementing your very own
-Linux kernel driver. By the end, you'll have a working driver that talks to our
-fake FPGA, and you'll understand why kernel developers drink so much coffee.
+Welcome to the fun part! This guide walks you through implementing your very own Linux kernel driver. By the end, you'll have a working driver that talks to our fake FPGA, and you'll understand why kernel developers drink so much coffee.
 
-Don't worry if you get stuck - that's normal. Kernel development has a learning
-curve shaped like a brick wall. We'll help you climb it.
+Don't worry if you get stuck - that's normal. Kernel development has a learning curve shaped like a brick wall. We'll help you climb it.
 
 ## Prerequisites
 
@@ -58,8 +54,7 @@ Your job is to complete the TODOs to make it fully functional.
    insmod phantomfpga.ko
    ```
 
-**Pro tip:** Keep a second terminal with `dmesg -w` running to see kernel
-messages in real-time.
+**Pro tip:** Keep a second terminal with `dmesg -w` running to see kernel messages in real-time.
 
 > [!NOTE]
 > **On the eternal tabs vs spaces debate:** This is kernel code. Tabs won. The Linux kernel coding style mandates hard tabs for indentation, and arguing about it is about as productive as explaining to your cat why it shouldn't sit on your keyboard. If seeing tabs in source files makes you uncomfortable, consider it exposure therapy. You'll survive. Probably.
@@ -72,9 +67,7 @@ messages in real-time.
 
 ### Background
 
-DMA (Direct Memory Access) allows the device to read/write system memory
-without CPU involvement. The PhantomFPGA device writes frames directly to
-a ring buffer in guest memory.
+DMA (Direct Memory Access) allows the device to read/write system memory without CPU involvement. The PhantomFPGA device writes frames directly to a ring buffer in guest memory.
 
 For DMA to work, you need:
 1. **Physically contiguous memory** - the device sees physical addresses
@@ -682,15 +675,9 @@ static int pfpga_mmap(struct file *file, struct vm_area_struct *vma)
 
 ### A Note on Buffer Layout
 
-The example above maps a single contiguous DMA buffer with `dma_mmap_coherent`.
-Your actual skeleton uses per-descriptor DMA buffers (one `dma_alloc_coherent`
-per descriptor), so you'll need `remap_pfn_range` in a loop instead.
+The example above maps a single contiguous DMA buffer with `dma_mmap_coherent`. Your actual skeleton uses per-descriptor DMA buffers (one `dma_alloc_coherent` per descriptor), so you'll need `remap_pfn_range` in a loop instead.
 
-When mapping multiple buffers into a single VMA, remember that the MMU works
-in pages. `dma_alloc_coherent` always returns page-aligned memory, and
-`remap_pfn_range` expects page-aligned addresses and sizes. If your buffer
-size isn't a natural multiple of `PAGE_SIZE`, think about what that means for
-the stride between consecutive buffers in the mapping.
+When mapping multiple buffers into a single VMA, remember that the MMU works in pages. `dma_alloc_coherent` always returns page-aligned memory, and `remap_pfn_range` expects page-aligned addresses and sizes. If your buffer size isn't a natural multiple of `PAGE_SIZE`, think about what that means for the stride between consecutive buffers in the mapping.
 
 ---
 
@@ -893,14 +880,9 @@ if (!pfdev->dma_buf)
 
 ### 4. Wrong Barrier Usage
 
-Memory barriers enforce ordering of memory operations. You usually don't need
-them between `ioread/iowrite` calls (those have implicit barriers), but you
-DO need one when mixing regular memory writes with MMIO register writes.
+Memory barriers enforce ordering of memory operations. You usually don't need them between `ioread/iowrite` calls (those have implicit barriers), but you DO need one when mixing regular memory writes with MMIO register writes.
 
-The classic case in DMA drivers: you write descriptor fields into coherent
-memory, then update a device register to tell the hardware about them. Without
-a barrier, the CPU might reorder those writes, and the device would see the
-updated register before the descriptor data is actually in memory.
+The classic case in DMA drivers: you write descriptor fields into coherent memory, then update a device register to tell the hardware about them. Without a barrier, the CPU might reorder those writes, and the device would see the updated register before the descriptor data is actually in memory.
 
 ```c
 /* Without wmb(): device might see new head before descriptor data */
@@ -910,8 +892,7 @@ wmb();  /* Ensure descriptor fields hit memory before head update */
 pfpga_write32(pfdev, REG_HEAD, new_head);  /* MMIO write to device */
 ```
 
-If you're only doing register-to-register writes, `iowrite32` handles ordering
-for you -- no explicit barrier needed:
+If you're only doing register-to-register writes, `iowrite32` handles ordering for you -- no explicit barrier needed:
 
 ```c
 /* These are fine without wmb() -- iowrite32 orders them */
@@ -923,8 +904,7 @@ See the Glossary entry for Memory Barrier for more context.
 
 ### 5. Interrupt Handler Doing Too Much
 
-Keep IRQ handlers minimal - just acknowledge the interrupt and wake waiters.
-Heavy processing should be in tasklets, workqueues, or userspace.
+Keep IRQ handlers minimal - just acknowledge the interrupt and wake waiters. Heavy processing should be in tasklets, workqueues, or userspace.
 
 ---
 

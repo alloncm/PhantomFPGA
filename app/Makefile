@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: MIT
 # PhantomFPGA Userspace Application (C++17)
 #
 # Usage:

@@ -1,13 +1,11 @@
 /*
- * QTest Unit Tests for PhantomFPGA Device v3.0 - ASCII Animation Edition
+ * QTest Unit Tests for PhantomFPGA Device v3.0
  *
  * Tests the PhantomFPGA virtual FPGA device's register behavior,
  * scatter-gather DMA configuration, and frame streaming.
  *
- * v3.0 streams pre-built ASCII animation frames. Build a driver,
- * stream frames over TCP, watch a cartoon play in the terminal.
- *
- * "Because nothing says 'I learned DMA' like ASCII art."
+ * v3.0 streams pre-built data frames via scatter-gather DMA.
+ * Build a driver, stream frames over TCP, display them on the host.
  *
  * SPDX-License-Identifier: GPL-2.0-or-later
  */
@@ -28,7 +26,7 @@
 #define PHANTOMFPGA_DEVICE_ID       0xF00D
 
 #define PHANTOMFPGA_DEV_ID_VAL      0xF00DFACE
-#define PHANTOMFPGA_DEV_VER         0x00030000  /* v3.0.0 - ASCII Animation */
+#define PHANTOMFPGA_DEV_VER         0x00030000  /* v3.0.0 */
 
 /* Frame constants - fixed, no configuration needed */
 #define FRAME_SIZE                  5120        /* Bytes per frame */
@@ -95,7 +93,7 @@
 #define FAULT_ALL_BITS          0x0F
 
 /* Default values */
-#define DEFAULT_FRAME_RATE      25      /* 25 fps - smooth animation */
+#define DEFAULT_FRAME_RATE      25      /* 25 fps */
 #define DEFAULT_DESC_RING_SIZE  256
 #define DEFAULT_IRQ_COALESCE    ((40000 << 16) | 8)  /* 8 frames or 40ms */
 #define DEFAULT_FAULT_RATE      1000

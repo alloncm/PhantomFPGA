@@ -1,13 +1,13 @@
 /* SPDX-License-Identifier: GPL-2.0 WITH Linux-syscall-note */
 /*
- * PhantomFPGA IOCTL Interface v3.0 - ASCII Animation Edition
+ * PhantomFPGA IOCTL Interface v3.0
  *
  * This header defines the interface between userspace applications
  * and the PhantomFPGA kernel driver. Include this in your application
  * to communicate with the /dev/phantomfpga device.
  *
- * v3.0 streams pre-built ASCII animation frames (fixed 5120 bytes each).
- * Build a driver, stream frames over TCP, watch a cartoon in your terminal.
+ * v3.0 streams pre-built data frames (fixed 5120 bytes each).
+ * Build a driver, stream frames over TCP, display them on the host.
  *
  * Usage:
  *   #include "phantomfpga_uapi.h"
@@ -32,7 +32,7 @@
 
 /* ------------------------------------------------------------------------ */
 /* Frame Constants                                                          */
-/* These are fixed - the device streams pre-built animation frames          */
+/* These are fixed - the device streams pre-built data frames               */
 /* ------------------------------------------------------------------------ */
 
 #define PHANTOMFPGA_FRAME_MAGIC     0xF00DFACE
@@ -85,12 +85,12 @@ struct phantomfpga_config {
  * @irq_count:          Total interrupt count
  * @desc_head:          Current descriptor head (submitted)
  * @desc_tail:          Current descriptor tail (completed)
- * @current_frame:      Current animation frame index (0-249)
+ * @current_frame:      Current frame index (0-249)
  * @status:             Device status register value
  * @reserved:           Reserved for future use
  *
  * Use with PHANTOMFPGA_IOCTL_GET_STATS to see what's going on.
- * Check frames_dropped if animation stutters.
+ * Check frames_dropped if playback stutters.
  */
 struct phantomfpga_stats {
 	__u64 frames_produced;    /* Frames transmitted */
@@ -104,7 +104,7 @@ struct phantomfpga_stats {
 	__u32 irq_count;          /* Total IRQ count */
 	__u32 desc_head;          /* Current head index */
 	__u32 desc_tail;          /* Current tail index */
-	__u32 current_frame;      /* Current animation frame (0-249) */
+	__u32 current_frame;      /* Current frame index (0-249) */
 	__u32 status;             /* Device status register */
 	__u32 reserved[4];        /* Reserved for future use */
 };

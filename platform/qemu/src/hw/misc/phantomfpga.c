@@ -1,11 +1,11 @@
 /*
- * PhantomFPGA QEMU PCIe Device Implementation - v3.0 ASCII Animation Edition
+ * PhantomFPGA QEMU PCIe Device Implementation - v3.0
  *
- * A virtual FPGA device that streams pre-built ASCII animation frames.
- * 250 frames at 25 fps = 10 seconds of looping cartoon goodness.
+ * A virtual FPGA device that streams pre-built data frames via SG-DMA.
+ * 250 frames at 25 fps = 10 seconds of looping payload.
  *
  * The trainee's goal: build a driver, stream frames over TCP,
- * and watch ASCII art come alive in the terminal.
+ * and display the payload on the host.
  *
  * "Making DMA training actually fun since 2024."
  *
@@ -552,7 +552,7 @@ static void phantomfpga_transmit_frame(PhantomFPGAState *s)
         DPRINTF("no descriptors available, dropping frame %u (head=%u tail=%u)\n",
                 s->current_frame, s->desc_head, s->desc_tail);
         phantomfpga_update_irq(s);
-        /* Advance to next frame anyway (don't stall animation) */
+        /* Advance to next frame anyway (don't stall playback) */
         s->current_frame = (s->current_frame + 1) % PHANTOMFPGA_FRAME_COUNT;
         return;
     }
@@ -661,7 +661,7 @@ complete_desc:
     s->desc_tail = (s->desc_tail + 1) & (s->desc_ring_size - 1);
     s->stat_desc_compl++;
 
-    /* Advance to next animation frame (loops) */
+    /* Advance to next frame (loops) */
     s->current_frame = (s->current_frame + 1) % PHANTOMFPGA_FRAME_COUNT;
 
     /* Update sequence number */
@@ -770,7 +770,7 @@ static void phantomfpga_realize(PCIDevice *pci_dev, Error **errp)
     PhantomFPGAState *s = PHANTOMFPGA(pci_dev);
     int ret;
 
-    DPRINTF("realizing device (v3.0 ASCII Animation edition)\n");
+    DPRINTF("realizing device (v3.0)\n");
 
     /* Initialize BAR0 for MMIO registers */
     memory_region_init_io(&s->bar0, OBJECT(s), &phantomfpga_mmio_ops, s,
@@ -897,7 +897,7 @@ static void phantomfpga_class_init(ObjectClass *klass, const void *data)
     k->revision = PHANTOMFPGA_REVISION;
     k->class_id = PCI_CLASS_OTHERS;  /* 0xFF0000 */
 
-    dc->desc = "PhantomFPGA ASCII Animation Streaming Device v3.0";
+    dc->desc = "PhantomFPGA Frame Streaming Device v3.0";
     dc->vmsd = &vmstate_phantomfpga;
 
     /* Use modern Resettable interface (QEMU 10.x+) */

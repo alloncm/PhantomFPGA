@@ -168,7 +168,7 @@ void PhantomFpgaViewer::usage(const char* prog)
 	fprintf(stderr,
 		"Usage: %s [options] [host] [port]\n"
 		"\n"
-		"Connect to a PhantomFPGA server and display ASCII animation.\n"
+		"Connect to a PhantomFPGA server and display frame data.\n"
 		"\n"
 		"  host           Server hostname (default: localhost)\n"
 		"  port           Server port (default: 5000)\n"

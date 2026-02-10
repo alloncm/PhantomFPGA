@@ -1,14 +1,12 @@
 /* SPDX-License-Identifier: GPL-2.0 */
 /*
- * PhantomFPGA Register Definitions v3.0 - ASCII Animation Edition
+ * PhantomFPGA Register Definitions v3.0
  *
  * This header mirrors the QEMU device register layout. The trainee driver
  * uses these definitions to communicate with the virtual FPGA device.
  *
- * v3.0 streams pre-built ASCII animation frames. Build a driver, stream
- * frames over TCP, watch a cartoon play in your terminal.
- *
- * "Because nothing says 'I learned DMA' like ASCII art."
+ * v3.0 streams pre-built data frames via scatter-gather DMA.
+ * Build a driver, stream frames over TCP, display them on the host.
  *
  * Matches: platform/qemu/src/hw/misc/phantomfpga.h
  */
@@ -26,7 +24,7 @@
 #define PHANTOMFPGA_VENDOR_ID       0x0DAD   /* Oh DAD - unassigned vendor ID */
 #define PHANTOMFPGA_DEVICE_ID       0xF00D   /* What every programmer needs */
 #define PHANTOMFPGA_SUBSYS_VENDOR   0x0DAD
-#define PHANTOMFPGA_SUBSYS_ID       0x0003   /* ASCII Animation edition */
+#define PHANTOMFPGA_SUBSYS_ID       0x0003   /* v3.0 edition */
 #define PHANTOMFPGA_REVISION        0x03
 
 /* ------------------------------------------------------------------------ */
@@ -35,11 +33,11 @@
 
 #define PHANTOMFPGA_BAR0_SIZE       4096
 #define PHANTOMFPGA_DEV_ID_VAL      0xF00DFACE  /* Expected in DEV_ID register */
-#define PHANTOMFPGA_DEV_VER         0x00030000  /* v3.0.0 - ASCII Animation */
+#define PHANTOMFPGA_DEV_VER         0x00030000  /* v3.0.0 */
 #define PHANTOMFPGA_MSIX_VECTORS    3           /* Complete, error, no_desc */
 
 /* Default values */
-#define PHANTOMFPGA_DEFAULT_FRAME_RATE  25      /* 25 fps - smooth animation */
+#define PHANTOMFPGA_DEFAULT_FRAME_RATE  25      /* 25 fps */
 #define PHANTOMFPGA_DEFAULT_DESC_COUNT  256     /* Descriptor ring entries */
 #define PHANTOMFPGA_DEFAULT_IRQ_COUNT   8       /* IRQ after N completions */
 #define PHANTOMFPGA_DEFAULT_IRQ_TIMEOUT 40000   /* 40ms = 1 frame at 25fps */

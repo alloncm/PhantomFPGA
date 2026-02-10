@@ -1,4 +1,5 @@
-# PhantomFPGA Viewer - ASCII Animation Terminal Client (C++17)
+# SPDX-License-Identifier: MIT
+# PhantomFPGA Viewer - Terminal Client (C++17)
 #
 # Simple build - no cross-compilation needed.
 # This runs on the host machine, not in the VM.
