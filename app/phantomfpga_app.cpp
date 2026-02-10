@@ -174,6 +174,7 @@ void PhantomFpgaApp::print_usage(const char* prog)
 		"  -S, --stats               Print device stats and exit\n"
 		"  -V, --verbose             Verbose output\n"
 		"      --tcp-server [PORT]   Start TCP server (default port %u)\n"
+		"      --zero-copy           Use mmap zero-copy path (bonus)\n"
 		"      --version             Show version and exit\n"
 		"  -h, --help                Show this help\n"
 		"\n"
@@ -206,6 +207,7 @@ int PhantomFpgaApp::parse_arguments(int argc, char* argv[])
 		{"stats",       no_argument,       nullptr, 'S'},
 		{"verbose",     no_argument,       nullptr, 'V'},
 		{"tcp-server",  optional_argument, nullptr, 'T'},
+		{"zero-copy",   no_argument,       nullptr, 'Z'},
 		{"version",     no_argument,       nullptr, 'v'},
 		{"help",        no_argument,       nullptr, 'h'},
 		{nullptr, 0, nullptr, 0}
@@ -242,6 +244,9 @@ int PhantomFpgaApp::parse_arguments(int argc, char* argv[])
 			config_.tcp_port = optarg
 				? static_cast<uint16_t>(strtoul(optarg, nullptr, 10))
 				: DEFAULT_TCP_PORT;
+			break;
+		case 'Z':
+			config_.zero_copy = true;
 			break;
 		case 'v':
 			fprintf(stderr, "PhantomFPGA App v3.0 (C++ edition)\n");

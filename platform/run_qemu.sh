@@ -189,7 +189,7 @@ setup_arch_paths() {
         aarch64)
             KERNEL_IMAGE="${PROJECT_ROOT}/platform/images/Image"
             ROOTFS_IMAGE="${PROJECT_ROOT}/platform/images/rootfs-aarch64.ext4"
-            MACHINE_TYPE="virt"     # ARM's generic virtualization platform
+            MACHINE_TYPE="virt,gic-version=3"  # GICv3 with ITS for MSI-X support
             CPU_TYPE="cortex-a72"   # Good balance of features and compatibility
             CONSOLE="ttyAMA0"       # ARM PrimeCell UART
             ;;

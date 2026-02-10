@@ -131,11 +131,54 @@ A mechanism for processes to sleep until a condition is met. The driver puts
 the process to sleep, and later wakes it up when data is available. More
 efficient than polling (checking for a condition) in a loop.
 
+### Memory Barrier
+A CPU instruction that enforces ordering of memory operations. Modern CPUs and
+compilers can reorder reads and writes for performance, which is usually fine --
+until you're talking to a DMA device that reads your memory too. If the CPU
+reorders a descriptor write *after* the head pointer update, the device sees
+the new head but reads stale descriptor data. Bad things happen.
+
+In PhantomFPGA, `wmb()` (write memory barrier) appears in descriptor
+submission: we write descriptor fields, then `wmb()`, then update the head
+register. The barrier guarantees the device sees fully-populated descriptors
+before it starts processing them. Think of it as "flush all my writes to
+memory before continuing" -- because the DMA engine doesn't have the luxury
+of CPU cache coherency for ordering.
+
+There are three main flavors in the kernel:
+- `wmb()` -- orders writes (our case: descriptors before head update)
+- `rmb()` -- orders reads (useful when reading device status after data)
+- `mb()` -- orders both (the sledgehammer approach)
+
+Note: `ioread32`/`iowrite32` (which `pfpga_write32` wraps) already include
+implicit barriers, so you don't need `wmb()` between register writes. You DO
+need it between regular memory writes (like descriptor fields) and register
+writes that signal the device.
+
 ### IRQ (Interrupt Request)
 A signal that tells the CPU "stop what you're doing, something needs attention".
 The kernel dispatches IRQs to registered handlers. In PhantomFPGA, the device
 raises IRQs when frames complete or errors occur. This is an integral part of
 the DMA process - the CPU is kicked only when the buffer is already full.
+
+### Interrupt Vector
+In the context of MSI-X, a "vector" is simply an independently-routable
+interrupt signal with its own ID number. Each vector can be assigned to a
+different CPU core and trigger a different handler function.
+
+The word comes from the original interrupt mechanism where the CPU would look
+up a handler address in an "interrupt vector table" -- an array indexed by
+interrupt number. So "vector 0" means "index 0 in that table". With MSI-X,
+it works the same way conceptually: the device writes a message to a specific
+address, and the interrupt controller routes it by vector number.
+
+PhantomFPGA uses 3 vectors:
+- Vector 0: frame completion (the happy path)
+- Vector 1: device error (something went wrong)
+- Vector 2: no descriptors available (ring buffer full)
+
+Having separate vectors means the kernel can dispatch each to a dedicated
+handler without checking status registers to figure out what happened.
 
 ---
 

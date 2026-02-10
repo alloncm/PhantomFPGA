@@ -155,6 +155,7 @@ struct AppConfig {
 	bool verbose         = false;
 	bool stats_only      = false;
 	bool validate_crc    = true;
+	bool zero_copy       = false;
 };
 
 /* Application-level counters */

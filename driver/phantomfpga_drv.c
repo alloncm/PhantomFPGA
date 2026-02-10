@@ -40,6 +40,7 @@
 #include <linux/mutex.h>
 #include <linux/spinlock.h>
 #include <linux/crc32.h>
+#include <linux/delay.h>
 
 #include "phantomfpga_regs.h"
 #include "phantomfpga_uapi.h"
@@ -116,7 +117,8 @@ struct phantomfpga_dev {
 	/* Ring indices (driver-side shadow) */
 	u32 desc_head;              /* Head: driver writes to submit */
 	u32 desc_tail;              /* Tail: device updates on completion */
-	u32 shadow_tail;            /* Driver's view of completed descriptors */
+	u32 shadow_tail;            /* Completion pointer (set by IRQ handler) */
+	u32 consumer;               /* Consumer pointer (advanced by read/ioctl) */
 
 	/* Statistics (driver-side) */
 	u64 frames_consumed;
@@ -304,7 +306,7 @@ static int pfpga_start_streaming(struct phantomfpga_dev *pfdev)
 	 * Steps:
 	 *   1. Check pfdev->configured - return -EINVAL if not configured
 	 *   2. Check pfdev->streaming - return -EBUSY if already streaming
-	 *   3. Reset indices: desc_head = desc_tail = shadow_tail = 0
+	 *   3. Reset indices: desc_head = desc_tail = shadow_tail = consumer = 0
 	 *   4. Write 0 to PHANTOMFPGA_REG_DESC_HEAD and DESC_TAIL
 	 *   5. Re-initialize descriptors (clear COMPLETED flags)
 	 *   6. Submit all available descriptors
@@ -353,7 +355,7 @@ static void pfpga_soft_reset(struct phantomfpga_dev *pfdev)
 	 * Steps:
 	 *   1. Write PHANTOMFPGA_CTRL_RESET to CTRL register
 	 *   2. The reset bit is self-clearing - wait briefly (udelay(10))
-	 *   3. Reset local state: streaming=false, all indices=0
+	 *   3. Reset local state: streaming=false, all indices=0 (including consumer)
 	 *
 	 * Note: Reset clears all device state including statistics
 	 */
@@ -524,27 +526,27 @@ static ssize_t pfpga_read(struct file *file, char __user *buf,
 	 *   2. Wait for completed descriptors if blocking:
 	 *      if (!(file->f_flags & O_NONBLOCK)) {
 	 *          ret = wait_event_interruptible(pfdev->wait_queue,
-	 *              !phantomfpga_desc_ring_empty(head, tail) || !streaming);
+	 *              consumer != shadow_tail || !streaming);
+	 *          // consumer != shadow_tail means IRQ handler advanced shadow_tail
 	 *          if (ret) return ret;
 	 *          if (!streaming) return 0;  // EOF
 	 *      }
 	 *
-	 *   3. Check for completed descriptors under lock:
+	 *   3. Check for completed-but-not-consumed frames under lock:
 	 *      spin_lock_irqsave(&pfdev->lock, flags);
-	 *      head = pfdev->desc_head;
-	 *      tail = pfdev->shadow_tail;
-	 *      pending = phantomfpga_desc_pending(head, tail, pfdev->desc_count);
+	 *      cons = pfdev->consumer;
+	 *      compl_tail = pfdev->shadow_tail;
 	 *      spin_unlock_irqrestore(&pfdev->lock, flags);
 	 *
-	 *   4. If no completions and non-blocking, return -EAGAIN
+	 *   4. If cons == compl_tail (nothing to consume), return -EAGAIN
 	 *
 	 *   5. Get the next completed descriptor:
-	 *      desc = &pfdev->desc_ring[tail];
+	 *      desc = &pfdev->desc_ring[cons];
 	 *      if (!(desc->control & PHANTOMFPGA_DESC_CTRL_COMPLETED))
 	 *          return -EAGAIN;  // Not actually complete yet
 	 *
 	 *   6. Read completion status from buffer end:
-	 *      buffer = pfdev->buffers[tail].vaddr;
+	 *      buffer = pfdev->buffers[cons].vaddr;
 	 *      compl = phantomfpga_completion_ptr(buffer, pfdev->buffer_size);
 	 *      if (compl->status != PHANTOMFPGA_COMPL_OK)
 	 *          dev_warn(...);  // Handle error
@@ -563,9 +565,9 @@ static ssize_t pfpga_read(struct file *file, char __user *buf,
 	 *   9. Reset descriptor for reuse:
 	 *      desc->control = 0;  // Clear COMPLETED
 	 *
-	 *  10. Advance tail and resubmit:
+	 *  10. Advance consumer and resubmit:
 	 *      spin_lock_irqsave(&pfdev->lock, flags);
-	 *      pfdev->shadow_tail = (tail + 1) & (pfdev->desc_count - 1);
+	 *      pfdev->consumer = (cons + 1) & (pfdev->desc_count - 1);
 	 *      pfdev->frames_consumed++;
 	 *      pfdev->bytes_consumed += to_copy;
 	 *      spin_unlock_irqrestore(&pfdev->lock, flags);
@@ -617,14 +619,14 @@ static __poll_t pfpga_poll(struct file *file, poll_table *wait)
 	 *   1. Register with poll subsystem:
 	 *      poll_wait(file, &pfdev->wait_queue, wait);
 	 *
-	 *   2. Check for completed descriptors:
+	 *   2. Check for completed-but-not-consumed frames:
 	 *      spin_lock_irqsave(&pfdev->lock, flags);
-	 *      head = pfdev->desc_head;
-	 *      tail = pfdev->shadow_tail;
+	 *      cons = pfdev->consumer;
+	 *      compl_tail = pfdev->shadow_tail;
 	 *      spin_unlock_irqrestore(&pfdev->lock, flags);
 	 *
 	 *   3. Set return mask:
-	 *      if (!phantomfpga_desc_ring_empty(head, tail))
+	 *      if (cons != compl_tail)
 	 *          mask |= EPOLLIN | EPOLLRDNORM;
 	 *      if (!pfdev->streaming)
 	 *          mask |= EPOLLHUP;
@@ -862,7 +864,7 @@ static long pfpga_ioctl(struct file *file, unsigned int cmd, unsigned long arg)
 			 *   1. spin_lock_irqsave
 			 *   2. Check if there are completed descriptors
 			 *   3. Reset descriptor for reuse
-			 *   4. Advance shadow_tail
+			 *   4. Advance consumer
 			 *   5. Increment frames_consumed
 			 *   6. spin_unlock_irqrestore
 			 *   7. Resubmit one descriptor
@@ -1235,7 +1237,7 @@ static int phantomfpga_probe(struct pci_dev *pdev,
 	pfdev->configured = false;
 	pfdev->streaming = false;
 
-	dev_info(&pdev->dev, "PhantomFPGA v3.0 driver loaded - ready for ASCII animation!\n");
+	dev_info(&pdev->dev, "PhantomFPGA v3.0 driver loaded\n");
 	return 0;
 
 err_desc:
@@ -1310,7 +1312,7 @@ static int __init phantomfpga_init(void)
 {
 	int ret;
 
-	pr_info("PhantomFPGA v3.0 ASCII Animation driver initializing\n");
+	pr_info("PhantomFPGA v3.0 driver initializing\n");
 
 	ret = alloc_chrdev_region(&phantomfpga_devno, 0, PHANTOMFPGA_MAX_DEVICES,
 				  DRIVER_NAME);

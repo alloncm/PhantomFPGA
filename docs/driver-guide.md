@@ -680,6 +680,18 @@ static int pfpga_mmap(struct file *file, struct vm_area_struct *vma)
 - `dma_mmap_coherent` is the right way to map DMA buffers
 - VM_IO marks as I/O memory, VM_DONTDUMP excludes from core dumps
 
+### A Note on Buffer Layout
+
+The example above maps a single contiguous DMA buffer with `dma_mmap_coherent`.
+Your actual skeleton uses per-descriptor DMA buffers (one `dma_alloc_coherent`
+per descriptor), so you'll need `remap_pfn_range` in a loop instead.
+
+When mapping multiple buffers into a single VMA, remember that the MMU works
+in pages. `dma_alloc_coherent` always returns page-aligned memory, and
+`remap_pfn_range` expects page-aligned addresses and sizes. If your buffer
+size isn't a natural multiple of `PAGE_SIZE`, think about what that means for
+the stride between consecutive buffers in the mapping.
+
 ---
 
 ## Part 11: IOCTL Implementation
@@ -881,15 +893,33 @@ if (!pfdev->dma_buf)
 
 ### 4. Wrong Barrier Usage
 
-Memory barriers are usually not needed with coherent DMA and `ioread/iowrite`,
-but understand when they might be:
+Memory barriers enforce ordering of memory operations. You usually don't need
+them between `ioread/iowrite` calls (those have implicit barriers), but you
+DO need one when mixing regular memory writes with MMIO register writes.
+
+The classic case in DMA drivers: you write descriptor fields into coherent
+memory, then update a device register to tell the hardware about them. Without
+a barrier, the CPU might reorder those writes, and the device would see the
+updated register before the descriptor data is actually in memory.
 
 ```c
-/* Write multiple values that must be seen in order */
+/* Without wmb(): device might see new head before descriptor data */
+pfdev->desc_ring[i].addr = buffer_dma;  /* regular memory write */
+pfdev->desc_ring[i].len = size;         /* regular memory write */
+wmb();  /* Ensure descriptor fields hit memory before head update */
+pfpga_write32(pfdev, REG_HEAD, new_head);  /* MMIO write to device */
+```
+
+If you're only doing register-to-register writes, `iowrite32` handles ordering
+for you -- no explicit barrier needed:
+
+```c
+/* These are fine without wmb() -- iowrite32 orders them */
 pfpga_write32(pfdev, REG_SIZE, size);
-wmb();  /* Ensure SIZE is written before ADDR */
 pfpga_write32(pfdev, REG_ADDR, addr);
 ```
+
+See the Glossary entry for Memory Barrier for more context.
 
 ### 5. Interrupt Handler Doing Too Much
 

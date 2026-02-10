@@ -428,7 +428,6 @@ static void phantomfpga_fire_irq(PhantomFPGAState *s, int vector)
     PCIDevice *pci_dev = PCI_DEVICE(s);
 
     if (s->msix_enabled && msix_enabled(pci_dev)) {
-        DPRINTF("firing MSI-X vector %d\n", vector);
         msix_notify(pci_dev, vector);
     }
 }
@@ -790,6 +789,10 @@ static void phantomfpga_realize(PCIDevice *pci_dev, Error **errp)
         s->msix_enabled = false;
     } else {
         s->msix_enabled = true;
+        /* Mark all vectors as used so msix_notify() actually delivers them */
+        for (int i = 0; i < PHANTOMFPGA_MSIX_VECTORS; i++) {
+            msix_vector_use(pci_dev, i);
+        }
         DPRINTF("MSI-X initialized with %d vectors\n", PHANTOMFPGA_MSIX_VECTORS);
     }
 
@@ -820,6 +823,9 @@ static void phantomfpga_exit(PCIDevice *pci_dev)
 
     /* Cleanup MSI-X if initialized */
     if (s->msix_enabled) {
+        for (int i = 0; i < PHANTOMFPGA_MSIX_VECTORS; i++) {
+            msix_vector_unuse(pci_dev, i);
+        }
         msix_uninit(pci_dev, &s->bar0, &s->bar0);
     }
 }
