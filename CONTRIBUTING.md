@@ -25,50 +25,48 @@ Specifically:
 - Accept constructive criticism gracefully
 - Focus on what's best for the learning community
 
-## Ways to Contribute
+## Ways to contribute
 
-### For Everyone
+### For everyone
 
-- **Report bugs**: Found something broken? Open an issue!
-- **Suggest improvements**: Have an idea? We'd love to hear it.
-- **Improve documentation**: Typos, unclear explanations, missing examples - all fair game.
-- **Share your experience**: Did the training help you? What was confusing? What clicked?
+- Found something broken? Report a bug: open an issue!
+- Have an idea? We'd love to hear it - suggest improvements.
+- Typos, unclear explanations, missing examples - all fair game for improving the documentation.
+- Did the training help you? What was confusing? What clicked? Share your experiences, here and in social and professional media. The more you talk about this repo, the more people we can help!
 
-### For Developers
+### For developers
 
-- **Fix bugs**: Check the issue tracker for things labeled `bug` or `good first issue`.
-- **Add features**: New device capabilities, better testing, improved tooling.
-- **Improve the skeleton code**: Better TODOs, clearer hints, more helpful error messages.
-- **Write tests**: More tests = more confidence = happier developers.
+- Check the issue tracker for things labeled `bug` or `good first issue`, help us nock down the bugs.
+- You are welcome to add stuff like new device capabilities, better testing, improved tooling.
+- The skeleton code may need better TODOs, clearer hints, more helpful error messages. Just remember - we're here to teach and guide, not to disclose.
+- Help with tests. More tests = more confidence = happier developers.
 
-### For Trainers/Educators
+### For trainers/educators
 
-- **Improve the learning flow**: Is the progression logical? What's missing?
-- **Add exercises**: More practice problems, challenges, "extra credit" tasks.
-- **Translate documentation**: Make it accessible to more people.
+- Help improve the learning flow: Is the progression logical? What's missing?
+- Thinking of additional exercises? Suggest more practice problems, challenges, "extra credit" tasks.
+- Translating the docs may be helpful. Help making it accessible to more people.
 
-## Getting Started
+## Getting started
 
-### Find Something to Work On
+### Find something to work on
 
-1. **Check the issues**: Look for labels like:
+1. Check the issues. Look for labels like:
    - `good first issue` - Great starting points
    - `help wanted` - We especially need help here
    - `documentation` - No code changes needed
    - `enhancement` - New features or improvements
+2. Scratch your own itch. Did something annoy you while using the project? Fix it!
+3. Comment on the issue before starting work to avoid duplicate effort.
 
-2. **Or scratch your own itch**: Did something annoy you while using the project? Fix it!
+### What makes a good contribution
 
-3. **Comment on the issue** before starting work to avoid duplicate effort.
+- One logical change per PR. Don't mix unrelated changes.
+- Did you actually try it? Does it work? Don't push untested work.
+- If you add/change features, update the docs.
+- Don't submit half-finished work (WIP PRs are okay if labeled).
 
-### What Makes a Good Contribution
-
-- **Focused**: One logical change per PR. Don't mix unrelated changes.
-- **Tested**: Did you actually try it? Does it work?
-- **Documented**: If you add features, update the docs.
-- **Complete**: Don't submit half-finished work (WIP PRs are okay if labeled).
-
-## Development Setup
+## Development setup
 
 You'll need the full dev environment. Follow the main README's prerequisites, then:
 
@@ -89,7 +87,7 @@ cd platform/buildroot && make && cd ../..
 # (wait for boot, then kill it)
 ```
 
-### Running Tests
+### Running tests
 
 ```bash
 # Unit tests (QEMU device)
@@ -101,9 +99,9 @@ cd tests/integration
 ./run_all.sh
 ```
 
-## Making Changes
+## Making changes
 
-### Create a Branch
+### Create a branch
 
 ```bash
 git checkout -b my-feature-branch
@@ -113,18 +111,18 @@ git checkout -b fix/issue-42
 
 Branch naming suggestions:
 - `feature/cool-new-thing`
-- `fix/broken-widget`
+- `fix/broken-build`
 - `docs/clarify-setup`
 - `test/more-coverage`
 
-### Make Your Changes
+### Make your changes
 
 - Follow the existing code style (see [Style Guide](#style-guide))
 - Test your changes
 - Update documentation if needed
 - Add yourself to CONTRIBUTORS.md if you want (optional)
 
-### Commit Messages
+### Commit messages
 
 Write clear, descriptive commit messages:
 
@@ -150,14 +148,14 @@ Explain what and why, not how (the code shows how).
 Fixes #123  (if applicable)
 ```
 
-## Submitting Changes
+## Submitting changes (common stuff for most open source projects)
 
-### Before You Submit
+### Before you submit
 
-1. **Test your changes**: Actually run the code. Boot the VM. Try to break it.
-2. **Update docs**: If you changed behavior, update the documentation.
-3. **Check for conflicts**: Rebase on latest main if needed.
-4. **Review your own PR**: Look at the diff. Anything embarrassing? Fix it.
+1. Test it. Actually run the code. Boot the VM. Try to break it.
+2. If you changed behavior, update the documentation.
+3. Rebase on latest main.
+4. Look at the diff again. Anything embarrassing? Fix it.
 
 ### Open a Pull Request
 
@@ -167,14 +165,14 @@ Fixes #123  (if applicable)
 4. Describe what you changed and why
 5. Reference any related issues
 
-### What Happens Next
+### What happens next
 
 - A maintainer will review your PR
 - They might ask for changes - that's normal and not a criticism
 - Once approved, it gets merged
 - You get a virtual high-five and our eternal gratitude
 
-### PR Review Checklist (for reviewers)
+### PR review checklist (for reviewers)
 
 - [ ] Does the code work?
 - [ ] Is it tested?
@@ -184,9 +182,9 @@ Fixes #123  (if applicable)
 - [ ] Are commit messages clear?
 - [ ] Any security concerns?
 
-## Style Guide
+## Style guide
 
-### C Code (QEMU Device, Driver)
+### C code (QEMU device, driver)
 
 - Follow Linux kernel style for driver code
 - Follow QEMU style for QEMU device code
@@ -203,7 +201,7 @@ Fixes #123  (if applicable)
 x = x + 1;
 ```
 
-### Shell Scripts
+### Shell scripts
 
 - Use `#!/bin/bash` (we need bash features)
 - Use `set -e` for error handling
@@ -215,21 +213,20 @@ x = x + 1;
 - Use simple, clear English
 - Include examples with expected output
 - Keep the tone friendly and approachable
-- Dad jokes and mild sarcasm are encouraged
+- Dad jokes are encouraged
 - No non-ASCII characters (keeps things simple)
 
-### Naming Things
+### Naming things
 
 - Be descriptive but not verbose
 - Use snake_case for C functions and variables
 - Use UPPER_CASE for C macros and constants
-- Use kebab-case for shell script files
 
 ## Questions?
 
-- **Open an issue** for project-related questions
-- **Start a discussion** for broader topics
-- **Check existing issues** before creating new ones
+- Open an issue for project-related questions
+- Start a discussion for broader topics
+- Check existing issues before creating new ones
 
 ## Recognition
 
