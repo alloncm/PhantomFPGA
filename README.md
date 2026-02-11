@@ -639,12 +639,11 @@ When it works, you'll know. It's not subtle.
 
 ## License
 
+This project is primarily licensed under the MIT License. However, specific components (such as the Linux kernel driver and QEMU device) are licensed under the GPL-2.0-only and GPL-2.0-or-later as required by their respective upstream dependencies.
+
 MIT License - see [LICENSE](LICENSE) for the full text.
-
-The QEMU device code is also compatible with GPL-2.0-or-later (to play nice with QEMU).
-The kernel driver skeleton is GPL-2.0 (because that's what Linux requires).
-
-Use it, learn from it, break it, fix it, share it. Just don't blame me when you accidentally `rm -rf /` inside the VM (ask me how I know this is a concern).
+GPL-2.0-or-later - see [GPL-2.0-or-later](LICENSES/GPL-2.0-or-later.txt)
+GPL-2.0-only - see [GPL-2.0-only](LICENSES/GPL-2.0-only.txt)
 
 ## Contributing
 

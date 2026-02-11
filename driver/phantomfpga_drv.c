@@ -18,7 +18,7 @@
  *   - Memory mapping with mmap()
  *   - CRC32 validation
  *
- * Copyright (C) 2024 PhantomFPGA Project
+ * Copyright (C) 2026 PhantomFPGA Project
  */
 
 #define pr_fmt(fmt) KBUILD_MODNAME ": " fmt

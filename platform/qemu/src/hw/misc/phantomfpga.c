@@ -1,13 +1,13 @@
 /*
  * PhantomFPGA QEMU PCIe Device Implementation - v3.0
  *
- * A virtual FPGA device that streams pre-built data frames via SG-DMA.
+ * A virtual FPGA device that streams data frames via SG-DMA.
  * 250 frames at 25 fps = 10 seconds of looping payload.
  *
  * The trainee's goal: build a driver, stream frames over TCP,
  * and display the payload on the host.
  *
- * "Making DMA training actually fun since 2024."
+ * "Making DMA training actually fun since 2026."
  *
  * SPDX-License-Identifier: GPL-2.0-or-later
  */
