@@ -68,13 +68,12 @@ The device has 250 frames of data. Each frame is exactly 5120 bytes. They loop f
 
 ## Features
 
-- **Virtual PCIe Device**: Full PCIe device model in QEMU with vendor ID 0x0DAD and device ID 0xF00D (because every project needs dad jokes in the PCI IDs)
-- **Scatter-Gather DMA**: Real descriptor-based DMA transfers, just like actual hardware
-- **MSI-X Interrupts**: Three vectors - one for "hey, data's ready", one for "oops", and one for "you're not keeping up"
-- **The Payload**: 250 frames, 5120 bytes each. Contents classified until you earn it.
-- **Fault Injection**: Corrupt CRCs, skip sequences, generally make life difficult (great for testing your error handling)
-- **Multi-Architecture**: Works on x86_64 and aarch64 (ARM64)
-- **Detailed Skeleton Code**: Driver and apps with extensive TODO comments guiding you step by step
+- Full PCIe device model in QEMU with vendor ID 0x0DAD and device ID 0xF00D (because every project needs dad jokes in the PCI IDs)
+- Real descriptor-based SG-DMA transfers, just like actual hardware
+- Three vectors of MSI-X interrupts - one for "hey, data's ready", one for "oops", and one for "you're not keeping up"
+- On-demand corrupt CRCs, skip sequences, generally make life difficult (great for testing your error handling)
+- Works on x86_64 and aarch64 (ARM64)
+- Driver and apps with extensive TODO comments guiding you step by step
 
 ## Quick Start
 
@@ -99,7 +98,7 @@ You need **Linux**. This project won't run directly on macOS or Windows.
 Once you have Linux running, install these packages:
 
 ```bash
-# Ubuntu/Debian - copy-paste this whole block
+# Ubuntu/Debian - copy-paste this whole block, others - I guess you know what you're doing anyway.
 sudo apt-get update
 sudo apt-get install -y \
     git build-essential cmake ninja-build meson pkg-config \
@@ -109,14 +108,14 @@ sudo apt-get install -y \
     rsync bc cpio unzip wget
 ```
 
-### Step 1: Clone the Repository
+### Step 1: Clone this repository (unless you already did)
 
 ```bash
 git clone https://github.com/walruscraft/PhantomFPGA.git
 cd PhantomFPGA
 ```
 
-### Step 2: Build QEMU with PhantomFPGA Device
+### Step 2: Build QEMU with PhantomFPGA device
 
 This builds a custom QEMU that includes our virtual device.
 
@@ -151,7 +150,7 @@ name "phantomfpga", bus PCI, desc "PhantomFPGA SG-DMA Training Device v3.0"
 
 If you see this - congratulations! You built a fake FPGA. Your parents would be... confused but probably supportive.
 
-### Step 3: Build the Guest Linux Image
+### Step 3: Build the guest Linux image
 
 This builds a minimal Linux system that runs inside QEMU.
 
@@ -162,7 +161,7 @@ cd ../..
 ```
 
 > [!NOTE]
-> This takes 20-40 minutes. The Makefile automatically picks the right architecture for your computer.
+> This takes 20-40 minutes, YMMV. The Makefile automatically picks the right architecture for your computer.
 
 **What you should see at the end** (don't move to Step 4 until you see this!):
 ```
@@ -567,7 +566,7 @@ cd platform/qemu && ./setup.sh && make build
 
 ### "Kernel image not found"
 
-Did you build Buildroot? Make sure you wait for it to complete - it takes 20-40 minutes.
+Did you build Buildroot? Make sure you wait for it to complete - it takes 20-40 minutes or even more, based on your HW.
 ```bash
 cd platform/buildroot && make
 ```
