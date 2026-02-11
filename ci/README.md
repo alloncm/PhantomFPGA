@@ -1,51 +1,68 @@
-# PhantomFPGA CI/CD Pipeline
+# PhantomFPGA CI
 
 This directory contains CI helper scripts. The actual pipeline is defined in
 `.github/workflows/ci.yml` (GitHub Actions).
 
-## Pipeline Overview
+## Pipeline overview
 
-The GitHub Actions workflow runs these jobs:
+The CI pipeline verifies that everything compiles. No artifacts are uploaded --
+this is a training project, not a release pipeline.
 
 ```
-+----------------+     +------------------+
-|  Build QEMU    |     | Build Buildroot  |  <- Parallel
-|  (x86 + arm64) |     |  (x86 + arm64)   |
-+-------+--------+     +--------+---------+
-        |                       |
-        v                       v
-+-------+--------+     +--------+---------+
-|  Smoke Test    |     |  Build Driver    |
-|                |     |  Build App       |
-+-------+--------+     +--------+---------+
-        |                       |
-        +----------+------------+
++----------------+   +----------------+   +----------------+
+|  Build QEMU    |   | Build Driver   |   |  Build App     |   <- All parallel
+|  (x86 + arm64) |   |                |   |                |
++-------+--------+   +-------+--------+   +-------+--------+
+        |                     |                    |
+        +----------+----------+--------------------+
                    |
                    v
           +--------+---------+
-          | Integration Test |
-          | (on push only)   |
+          |   CI Success     |   <- Gate job (branch protection)
           +------------------+
 ```
 
+All three build jobs run in parallel. The `CI Success` gate job waits for all
+of them and fails if any failed -- use it as your branch protection rule.
+
 ## Triggers
 
-- **Push to main/develop**: Full pipeline including integration tests
-- **Pull requests to main**: Build and smoke tests (faster feedback)
-- **Documentation changes**: Skipped (saves resources)
+- **Push to main/develop**: Full pipeline
+- **Pull requests to main**: Full pipeline
+- **Documentation changes** (`.md`, `docs/`, `LICENSE`): Skipped
 
-## Helper Scripts
+## What gets tested
 
-The `scripts/` directory contains helper scripts you can also run locally:
+| Job | What it verifies |
+|-----|------------------|
+| Build QEMU | Device compiles into QEMU, appears in `-device help` |
+| Build Driver | Driver module compiles against kernel headers, warns on warnings |
+| Build App | App compiles with `make`, `--help` runs without crashing |
+| CI Success | All of the above passed |
 
-| Script | Description |
-|--------|-------------|
-| `build-qemu.sh` | Build QEMU with PhantomFPGA device |
-| `build-buildroot.sh` | Build guest kernel and rootfs |
-| `run-integration-tests.sh` | Run integration tests in QEMU VM |
-| `smoke-test.sh` | Quick verification without booting VM |
+## Caching
 
-### Usage Examples
+The pipeline uses GitHub Actions caching for:
+
+1. **QEMU source**: Cached by version (`v10.2.0`)
+2. **QEMU builds**: Cached per architecture + source file hash
+
+## Helper scripts
+
+The `scripts/` directory has helper scripts for local use and future CI
+expansion. They're not all wired into the GitHub Actions workflow yet.
+
+| Script | Used by CI? | Description |
+|--------|:-----------:|-------------|
+| `build-qemu.sh` | No | Build QEMU with dependency detection |
+| `build-buildroot.sh` | No | Build guest kernel and rootfs |
+| `smoke-test.sh` | No | Quick file-existence and sanity checks |
+| `run-integration-tests.sh` | No | Boot QEMU VM and run tests via SSH |
+
+The CI workflow does its own inline build steps rather than calling these
+scripts. The scripts are still useful for local development and testing.
+
+### Usage examples
 
 ```bash
 # Build QEMU for x86_64
@@ -54,46 +71,16 @@ The `scripts/` directory contains helper scripts you can also run locally:
 # Build Buildroot with shared download cache
 ./scripts/build-buildroot.sh --arch both --download-dir /tmp/br-cache
 
-# Run integration tests
-./scripts/run-integration-tests.sh --arch x86_64 --timeout 300
-
-# Quick smoke test
+# Run smoke tests
 ./scripts/smoke-test.sh --arch both
+
+# Run integration tests (needs QEMU + guest images built first)
+./scripts/run-integration-tests.sh --arch x86_64 --timeout 300
 ```
 
-## Caching Strategy
+## Local testing
 
-The pipeline uses GitHub Actions caching for:
-
-1. **QEMU source**: Cached by version
-2. **QEMU builds**: Cached per architecture + source hash
-3. **Buildroot downloads**: Shared across all builds
-4. **Buildroot output**: Cached per architecture + config hash
-
-## What Gets Tested
-
-| Check | What it verifies |
-|-------|------------------|
-| Build QEMU | Device compiles into QEMU |
-| Build Driver | Driver compiles against kernel headers |
-| Build App | App compiles with CMake |
-| Smoke Test | PhantomFPGA device shows up in QEMU |
-| Integration | VM boots, device is visible via lspci |
-
-## Artifacts
-
-The pipeline produces these artifacts (retained for 7 days):
-
-| Artifact | Contents |
-|----------|----------|
-| `qemu-x86_64` | QEMU binary for x86_64 |
-| `qemu-aarch64` | QEMU binary for aarch64 |
-| `guest-x86_64` | Kernel + rootfs for x86_64 |
-| `guest-aarch64` | Kernel + rootfs for aarch64 |
-
-## Local Testing
-
-To test what CI tests locally:
+To reproduce what CI does locally:
 
 ```bash
 # Build QEMU (same as CI)
@@ -107,16 +94,8 @@ cd platform/qemu
 cd driver && make
 
 # Build app (same as CI)
-cd app && mkdir -p build && cd build && cmake .. && make
+cd app && make
 ```
-
-## Timeouts
-
-| Job | Timeout |
-|-----|---------|
-| QEMU build | 60 minutes |
-| Buildroot build | 120 minutes |
-| Integration tests | 15 minutes |
 
 ## Troubleshooting
 
@@ -127,19 +106,13 @@ Make sure QEMU was built with our patches:
 ./platform/qemu/build/qemu-system-x86_64 -device help 2>&1 | grep phantom
 ```
 
-### Build taking forever
+### Driver build fails on CI but not locally
 
-Buildroot builds the entire guest Linux from source. First build takes 30-60
-minutes. Subsequent builds use cache.
+CI uses `ubuntu-22.04` with the runner's kernel headers. If your driver uses
+APIs that differ between kernel versions, this can happen. Check the build log
+for the exact error.
 
-### Integration test failures
+### Adding new CI checks
 
-Check if all artifacts downloaded correctly. The VM needs both QEMU binary
-and guest images to boot.
-
-## Adding New Tests
-
-1. Add test script to `tests/integration/`
-2. Make it exit 0 on success, non-zero on failure
-3. Add to `tests/integration/run_all.sh`
-4. CI will pick it up automatically
+The workflow is in `.github/workflows/ci.yml`. Add a new job and include it
+in the `ci-success` job's `needs` list so branch protection catches it.

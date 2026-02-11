@@ -4,18 +4,18 @@ First off - thank you for considering contributing! Whether you're fixing a typo
 
 And yes, we accept dad jokes in code comments. Quality control is minimal on those.
 
-## Table of Contents
+## Table of contents
 
-- [Code of Conduct](#code-of-conduct)
-- [Ways to Contribute](#ways-to-contribute)
-- [Getting Started](#getting-started)
-- [Development Setup](#development-setup)
-- [Making Changes](#making-changes)
-- [Submitting Changes](#submitting-changes)
-- [Style Guide](#style-guide)
+- [Code of conduct](#code-of-conduct)
+- [Ways to contribute](#ways-to-contribute)
+- [Getting started](#getting-started)
+- [Development setup](#development-setup)
+- [Making changes](#making-changes)
+- [Submitting changes](#submitting-changes)
+- [Style guide](#style-guide)
 - [Questions?](#questions)
 
-## Code of Conduct
+## Code of conduct
 
 Be nice. We're all here to learn and help others learn. No gatekeeping, no "well actually" energy, no making people feel bad for not knowing things. Everyone was a beginner once, even Chuck Norris (okay, maybe not Chuck Norris).
 
@@ -157,7 +157,7 @@ Fixes #123  (if applicable)
 3. Rebase on latest main.
 4. Look at the diff again. Anything embarrassing? Fix it.
 
-### Open a Pull Request
+### Open a pull request
 
 1. Push your branch to your fork
 2. Open a PR against `walruscraft/PhantomFPGA:main`

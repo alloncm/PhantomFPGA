@@ -1,4 +1,4 @@
-# PhantomFPGA Architecture
+# PhantomFPGA architecture
 
 > "Any sufficiently advanced emulation is indistinguishable from real hardware bugs."
 > - Somebody, probably
@@ -7,7 +7,7 @@ This document explains how all the pieces of PhantomFPGA fit together. If you're
 
 > **New to kernel development?** Check the **[Glossary](glossary.md)** for quick explanations of terms like PCIe, DMA, BAR, MSI-X, and other jargon.
 
-## System Overview
+## System overview
 
 ```
 +-------------------------------------------------------------------------+
@@ -63,7 +63,7 @@ This document explains how all the pieces of PhantomFPGA fit together. If you're
 
 ## Components
 
-### 1. PhantomFPGA QEMU Device
+### 1. PhantomFPGA QEMU device
 
 **Location:** `platform/qemu/src/hw/misc/phantomfpga.c`
 
@@ -75,18 +75,18 @@ The virtual PCIe device that simulates an FPGA frame producer. Key features:
 |---------|-------------|
 | PCI ID | Vendor 0x0DAD, Device 0xF00D |
 | BAR0 | 4KB MMIO register space |
-| MSI-X | 2 vectors (watermark, overrun) |
+| MSI-X | 3 vectors (complete, error, no_desc) |
 | DMA | Bus-master writes to guest memory |
 
 **Device State Machine:**
 
 ```
-    +-------+    CTRL_START    +---------+
+    +-------+     CTRL_RUN      +---------+
     | IDLE  |----------------->| RUNNING |
     +-------+                  +---------+
         ^                          |
         |      CTRL_RESET or       |
-        |      CTRL_START=0        |
+        |       CTRL_RUN=0         |
         +--------------------------+
 ```
 
@@ -94,10 +94,10 @@ When running, the device:
 1. Fires a timer at the configured frame rate
 2. Assembles a frame with header + payload (embedded data) + CRC
 3. Writes the frame to the ring buffer via scatter-gather DMA
-4. Advances the producer index
-5. Fires MSI-X interrupt when watermark is reached
+4. Advances the descriptor tail index
+5. Fires MSI-X interrupt (based on coalescing: count threshold or timeout)
 
-### 2. Linux Kernel Driver
+### 2. Linux kernel driver
 
 **Location:** `driver/phantomfpga_drv.c`
 
@@ -109,7 +109,7 @@ The kernel module that interfaces with the device. Responsibilities:
 |-----------|---------|
 | PCI probe/remove | Device lifecycle management |
 | BAR mapping | Register access via `ioread32`/`iowrite32` |
-| DMA allocation | Coherent buffer for ring buffer |
+| DMA allocation | Descriptor ring + per-descriptor buffers |
 | MSI-X handlers | Interrupt handling |
 | Char device | `/dev/phantomfpga0` for userspace |
 | File operations | open, read, poll, mmap, ioctl |
@@ -121,28 +121,28 @@ The kernel module that interfaces with the device. Responsibilities:
 |                      phantomfpga_drv.ko                           |
 |                                                                   |
 |  +----------------+     +-----------------+     +---------------+ |
-|  | PCI Subsystem  |     | Char Device     |     | IRQ Handler   | |
+|  | PCI Subsystem  |     | Char Device     |     | IRQ Handlers  | |
 |  |                |     |                 |     |               | |
-|  | - probe()      |     | - open()        |     | - watermark() | |
-|  | - remove()     |     | - release()     |     | - overrun()   | |
-|  | - BAR mapping  |     | - read()        |     |               | |
-|  | - MSI-X setup  |     | - poll()        |     | Updates:      | |
-|  | - DMA alloc    |     | - mmap()        |     | - prod_idx    | |
-|  +----------------+     | - ioctl()       |     | - wake_up()   | |
+|  | - probe()      |     | - open()        |     | - complete()  | |
+|  | - remove()     |     | - release()     |     | - error()     | |
+|  | - BAR mapping  |     | - read()        |     | - no_desc()   | |
+|  | - MSI-X setup  |     | - poll()        |     |               | |
+|  | - DMA alloc    |     | - mmap()        |     | Updates:      | |
+|  +----------------+     | - ioctl()       |     | - shadow_tail | |
 |         |               +-----------------+     +---------------+ |
 |         |                      |                       |          |
 |         v                      v                       v          |
 |  +---------------------------------------------------------------+|
 |  |                    struct phantomfpga_dev                       ||
 |  |  - pdev (PCI device)        - cdev (char device)              ||
-|  |  - regs (BAR0 mapping)      - dma_buf (DMA buffer)            ||
-|  |  - lock (spinlock)          - wait_queue                      ||
-|  |  - prod_idx, cons_idx       - frame_size, ring_size           ||
+|  |  - regs (BAR0 mapping)      - desc_ring (SG descriptors)     ||
+|  |  - lock (spinlock)          - buffers (DMA buffers)           ||
+|  |  - desc_head, desc_tail     - wait_queue                      ||
 |  +---------------------------------------------------------------+|
 +-------------------------------------------------------------------+
 ```
 
-### 3. Userspace Application (TCP Server)
+### 3. Userspace application (TCP server)
 
 **Location:** `app/phantomfpga_app_impl.cpp`
 
@@ -161,7 +161,7 @@ The server application that bridges the driver and external viewers:
 
 The app runs inside the guest VM and listens on port 5000 for viewer connections.
 
-### 4. Terminal Viewer (TCP Client)
+### 4. Terminal viewer (TCP client)
 
 **Location:** `viewer/phantomfpga_view_impl.cpp`
 
@@ -178,9 +178,9 @@ A terminal-based client that runs on the host machine:
 
 The viewer is the final piece of the puzzle - when everything works, you'll see what the device has been hiding all along. Use `--record stream.bin` to save the stream, then validate it with `tools/validate_stream.py`.
 
-## Data Flow
+## Data flow
 
-### Control Plane (Configuration)
+### Control plane (configuration)
 
 ```
 Userspace                    Kernel                      Device
@@ -192,30 +192,32 @@ Userspace                    Kernel                      Device
    |                           |                           |
    |  ioctl(START)             |                           |
    |-------------------------->|                           |
-   |                           |  CTRL |= START | IRQ_EN   |
+   |                           |  CTRL |= RUN | IRQ_EN     |
    |                           |-------------------------->|
    |                           |                           |
    |                           |         Timer starts      |
    |                           |           running         |
 ```
 
-### Data Plane (Frame Production)
+### Data plane (frame production)
 
 ```
 Device                        Memory                      Driver
    |                           |                           |
    |  Timer fires              |                           |
    |                           |                           |
-   |  DMA write frame          |                           |
-   |-------------------------->| Frame N                   |
+   |  Read descriptor at tail  |                           |
+   |  DMA write frame to buf   |                           |
+   |-------------------------->| Descriptor buffer         |
    |                           |  +------------------+     |
-   |                           |  | magic: 0xF00DFACE|     |
-   |                           |  | seq: N           |     |
-   |  prod_idx++               |  | [payload bytes]  |     |
+   |  Set COMPLETED flag       |  | magic: 0xF00DFACE|     |
+   |  Write completion status  |  | seq: N           |     |
+   |  Advance desc_tail        |  | [payload bytes]  |     |
    |                           |  | crc32: ...       |     |
-   |  pending >= watermark?    |  +------------------+     |
+   |  Coalesce threshold met?  |  +------------------+     |
+   |  (count or timeout)       |                           |
    |                           |                           |
-   |  Yes: set IRQ_WATERMARK   |                           |
+   |  Yes: set IRQ_COMPLETE    |                           |
    |                           |                           |
    |  MSI-X vector 0           |                           |
    |------------------------------------------------------>|
@@ -226,7 +228,7 @@ Device                        Memory                      Driver
    |                           |     Clear IRQ (W1C)       |
    |                           |<--------------------------|
    |                           |                           |
-   |                           |     Read PROD_IDX         |
+   |                           |     Read DESC_TAIL        |
    |                           |<--------------------------|
    |                           |                           |
    |                           |   wake_up_interruptible   |
@@ -235,7 +237,7 @@ Device                        Memory                      Driver
    |                           |    Userspace unblocks     |
 ```
 
-### Data Plane (Frame Consumption)
+### Data plane (frame consumption)
 
 ```
 Userspace                    Kernel                      Device
@@ -244,99 +246,110 @@ Userspace                    Kernel                      Device
    |<--------------------------|                           |
    |                           |                           |
    |  Access mmap'd buffer     |                           |
-   |  at cons_idx * frame_size |                           |
+   |  for current descriptor   |                           |
    |                           |                           |
    |  Validate frame:          |                           |
    |   - Check magic           |                           |
    |   - Check sequence        |                           |
+   |   - Verify CRC            |                           |
    |   - Process payload       |                           |
    |                           |                           |
    |  ioctl(CONSUME_FRAME)     |                           |
    |-------------------------->|                           |
-   |                           |  cons_idx++               |
-   |                           |  write CONS_IDX register  |
+   |                           |  consumer++               |
+   |                           |  Reset descriptor         |
+   |                           |  Resubmit (desc_head++)   |
+   |                           |  write DESC_HEAD register |
    |                           |-------------------------->|
    |                           |                           |
-   |                           |     Ring space freed      |
+   |                           |    Descriptor available   |
 ```
 
-## Ring Buffer Protocol
+## Ring buffer protocol
 
 The ring buffer is a circular queue with power-of-2 size for efficient index wrapping. If you've ever dealt with a circular parking garage, it's the same idea - except the cars are frames and nobody's honking.
 
-### Memory Layout
+### Memory layout
 
 ```
-DMA Buffer Base (dma_addr)
+Descriptor Ring (coherent DMA)
 |
 v
-+--------------+--------------+--------------+-----+--------------+
-|    Frame0    |    Frame1    |    Frame2    | ... |    FrameN    |
-+--------------+--------------+--------------+-----+--------------+
-|<-frame_size->|
++----------+----------+----------+-----+----------+
+|  Desc 0  |  Desc 1  |  Desc 2  | ... |  Desc N  |  (32 bytes each)
++----------+----------+----------+-----+----------+
+     |           |          |                |
+     v           v          v                v
++---------+ +---------+ +---------+    +---------+
+| Buffer0 | | Buffer1 | | Buffer2 |   | BufferN |  (5136 bytes each)
+| [frame] | | [frame] | | [frame] |   | [frame] |
+| [compl] | | [compl] | | [compl] |   | [compl] |
++---------+ +---------+ +---------+    +---------+
 
-Total size = frame_size * ring_size
+Each buffer = frame (5120 bytes) + completion writeback (16 bytes)
 ```
 
-### Index Management
+### Index management
+
+The descriptor ring has three pointers -- think of it as a two-stage pipeline:
 
 ```
-Ring with 8 entries (ring_size = 8):
+Ring with 8 descriptors (desc_count = 8):
 
-          Consumer        Producer
+         desc_tail     desc_head
+          (device)      (driver)
               |               |
               v               v
         +---+---+---+---+---+---+---+---+
 Slot:   | 0 | 1 | 2 | 3 | 4 | 5 | 6 | 7 |
         +---+---+---+---+---+---+---+---+
               ^           ^
-              |  Pending  |
-              |  (1,2,3,4)|
+              | Available |
+              |  to device|
               +-----------+
 
-cons_idx = 1  (next frame to consume)
-prod_idx = 5  (next slot device will write to)
-pending = (prod_idx - cons_idx) & (ring_size - 1) = 4
-
-After consuming one frame:
-cons_idx = 2
-pending = 3
+desc_head = 5  (driver submits up to here)
+desc_tail = 1  (device has completed up to here)
+pending = (desc_head - desc_tail) & (desc_count - 1) = 4
 ```
 
-### Full vs Empty
+The driver also tracks a `consumer` index for completed-but-not-yet-consumed descriptors, and a `shadow_tail` updated by the IRQ handler.
+
+### Full vs empty
 
 The ring keeps one slot empty to distinguish full from empty. Yes, we sacrifice one slot. It's a classic tradeoff - simpler code or more space. Simpler code won.
 
 | Condition | Formula |
 |-----------|---------|
-| Empty | `prod_idx == cons_idx` |
-| Full | `((prod_idx + 1) & (ring_size - 1)) == cons_idx` |
-| Pending | `(prod_idx - cons_idx) & (ring_size - 1)` |
+| Empty | `desc_head == desc_tail` |
+| Full | `((desc_head + 1) & (desc_count - 1)) == desc_tail` |
+| Pending | `(desc_head - desc_tail) & (desc_count - 1)` |
 
-### Overrun Handling
+### No-descriptor handling
 
-When the ring is full and the device tries to produce a new frame, things get ugly (but predictable):
+When no descriptors are available and the device tries to produce a new frame, things get ugly (but predictable):
 
-1. Device sets `STATUS_OVERRUN` flag
-2. Device increments `stat_overruns` counter
-3. Device fires `IRQ_OVERRUN` interrupt (MSI-X vector 1)
+1. Device sets `STATUS_DESC_EMPTY` flag
+2. Device increments `stat_frames_drop` counter
+3. Device fires `IRQ_NO_DESC` interrupt (MSI-X vector 2)
 4. Frame is **not** written (dropped)
-5. Producer index is **not** advanced
+5. Descriptor tail is **not** advanced
 
-The driver must consume frames faster to prevent overruns. The device will not wait for you. It has places to be.
+The driver must consume frames and resubmit descriptors fast enough to keep up. The device will not wait for you. It has places to be.
 
-## MSI-X Interrupt Flow
+## MSI-X interrupt flow
 
-MSI-X is how the device taps the CPU on the shoulder without being rude. Two vectors, two reasons to interrupt your day.
+MSI-X is how the device taps the CPU on the shoulder without being rude. Three vectors, three reasons to interrupt your day.
 
-### Vector Assignment
+### Vector assignment
 
 | Vector | Interrupt | Purpose |
 |--------|-----------|---------|
-| 0 | Watermark | Pending frames >= watermark threshold |
-| 1 | Overrun | Ring buffer full, frame dropped |
+| 0 | Complete | Descriptor(s) completed (coalescing threshold met) |
+| 1 | Error | DMA or device error |
+| 2 | No_desc | No descriptors available, frame dropped |
 
-### Interrupt Lifecycle
+### Interrupt lifecycle
 
 ```
 1. Device sets IRQ_STATUS bit
@@ -347,25 +360,35 @@ MSI-X is how the device taps the CPU on the shoulder without being rude. Two vec
 5. Driver processes condition (wake waiters, log error, etc.)
 ```
 
-### Watermark Threshold
+### IRQ coalescing
 
-The watermark controls interrupt coalescing, examples:
+The IRQ_COALESCE register (0x03C) controls when completion interrupts fire. Two thresholds -- whichever hits first wins:
 
-| Watermark | Behavior |
-|-----------|----------|
-| 1 | Interrupt on every frame (high CPU, low latency) |
-| 64 | Interrupt every 64 frames (lower CPU, higher latency) |
-| ring_size/2 | Balanced approach |
+| Setting | Field | Behavior |
+|---------|-------|----------|
+| Count [15:0] | irq_coalesce_count | Interrupt after N completions |
+| Timeout [31:16] | irq_coalesce_timeout | Interrupt after N microseconds |
 
-## Fault Injection
+Examples with default 25 fps:
+
+| Count | Timeout | Behavior |
+|-------|---------|----------|
+| 1 | 40000 us | Interrupt on every frame (high CPU, low latency) |
+| 8 | 40000 us | Interrupt every 8 frames or 40ms (default, balanced) |
+| 64 | 100000 us | Batch heavily (lower CPU, higher latency) |
+
+## Fault injection
 
 The device supports testing error handling via the `FAULT_INJECT` register:
 
 | Bit | Fault | Effect |
 |-----|-------|--------|
-| 0 | DROP_FRAMES | Randomly drop ~10% of frames |
-| 1 | CORRUPT_DATA | Flip bits in payload, set CORRUPTED flag |
-| 2 | DELAY_IRQ | Suppress MSI-X (test polling fallback) |
+| 0 | DROP_FRAME | Drop frames randomly (probability ~1/N via FAULT_RATE) |
+| 1 | CORRUPT_CRC | Write wrong CRC value |
+| 2 | CORRUPT_DATA | Flip bits in frame data |
+| 3 | SKIP_SEQUENCE | Skip sequence numbers |
+
+The `FAULT_RATE` register (0x05C) controls probability: roughly 1 in N frames will be affected (default 1000).
 
 Enable in the guest (before loading the driver):
 ```bash
@@ -373,23 +396,28 @@ Enable in the guest (before loading the driver):
 # 0x58 is the register offset - see the datasheet for the full register map.
 echo 1 > /sys/bus/pci/devices/0000:00:01.0/enable
 BAR0=$(lspci -v -s 00:01.0 | grep "Memory at" | awk '{print $3}')
-devmem $((0x${BAR0} + 0x58)) w 0x01   # Enable DROP_FRAMES (bit 0)
-devmem $((0x${BAR0} + 0x58)) w 0x03   # Enable DROP + CORRUPT (bits 0,1)
+devmem $((0x${BAR0} + 0x58)) w 0x01   # Enable DROP_FRAME (bit 0)
+devmem $((0x${BAR0} + 0x58)) w 0x06   # Enable CORRUPT_CRC + CORRUPT_DATA (bits 1,2)
+devmem $((0x${BAR0} + 0x5C)) w 100    # Set fault rate to ~1 in 100 frames
 
 # No output means success. Read back to verify:
-devmem $((0x${BAR0} + 0x58))          # Should print 0x00000003
+devmem $((0x${BAR0} + 0x58))          # Should print 0x00000006
 ```
 
-## Memory Considerations
+## Memory considerations
 
-### DMA Buffer Sizing
+### DMA buffer sizing
+
+Each descriptor needs its own buffer (frame + completion writeback), plus the descriptor ring itself:
 
 ```
-buffer_size = frame_size * ring_size
+per_buffer = frame_size + completion_size = 5120 + 16 = 5136 bytes
+ring_mem   = desc_count * descriptor_size = desc_count * 32 bytes
+total      = (per_buffer * desc_count) + ring_mem
 
-Examples:
-  4KB frames x 256 entries = 1MB buffer
-  64KB frames x 64 entries = 4MB buffer
+Example with 256 descriptors (default):
+  5136 * 256 = ~1.3 MB for buffers
+  32 * 256   = 8 KB for descriptor ring
 ```
 
 The driver should allocate DMA memory using `dma_alloc_coherent()` which:
@@ -397,7 +425,7 @@ The driver should allocate DMA memory using `dma_alloc_coherent()` which:
 - Is cache-coherent (no explicit cache management needed)
 - Provides both virtual (for driver) and physical (for device) addresses
 
-### Cache Coherency
+### Cache coherency
 
 With coherent DMA (`dma_alloc_coherent`):
 - Device writes are immediately visible to CPU
@@ -406,7 +434,7 @@ With coherent DMA (`dma_alloc_coherent`):
 
 For mmap to userspace, use `dma_mmap_coherent()` or ensure `pgprot_noncached()` is applied.
 
-## Concurrency Model
+## Concurrency model
 
 Welcome to the fun part - making sure nothing explodes when multiple things happen at once. This is where bugs go to hide.
 
@@ -437,7 +465,7 @@ The QEMU device runs in a single QEMU thread (main loop or dedicated vcpu). All 
 | `lock` | Spinlock | Indices, statistics, IRQ state |
 | `wait_queue` | Wait queue | Sleeping in read/poll |
 
-### Ordering Rules
+### Ordering rules
 
 These rules exist because someone, somewhere, learned them the hard way:
 
@@ -446,9 +474,9 @@ These rules exist because someone, somewhere, learned them the hard way:
 3. Use `spin_lock` in IRQ context (already interrupt-disabled)
 4. Keep critical sections short (the system is waiting on you)
 
-## Guest-Host Interface
+## Guest-host interface
 
-### Shared Directories (9p virtfs)
+### Shared directories (9p virtfs)
 
 > See [Glossary: 9p/virtfs](glossary.md#9p--virtfs) for background on this protocol.
 
@@ -460,7 +488,7 @@ app/     <--- 9p mount --->  /mnt/app
 
 Changes on the host are immediately visible in the guest (and vice versa). This allows editing code on the host and building in the guest.
 
-### SSH Access
+### SSH access
 
 ```
 Host port 2222 --> Guest port 22
@@ -468,7 +496,7 @@ Host port 2222 --> Guest port 22
 ssh -p 2222 root@localhost
 ```
 
-### GDB Debugging
+### GDB debugging
 
 With `--debug` flag:
 ```
@@ -480,11 +508,11 @@ gdb vmlinux
 (gdb) continue
 ```
 
-## Performance Characteristics
+## Performance characteristics
 
 Or: "Why is my frame rate not 10,000 fps?" - You, probably not.
 
-### Practical Considerations
+### Practical considerations
 
 - QEMU virtual timer resolution limits high rates
 - DMA bandwidth limited by QEMU's memory subsystem
@@ -493,11 +521,11 @@ Or: "Why is my frame rate not 10,000 fps?" - You, probably not.
 
 PhantomFPGA defaults to 25 fps with 5120-byte frames - plenty for what it's trying to show you. You're learning, not trying to break speed records. Save that for when you have real hardware and a deadline.
 
-## Still With Me?
+## Still with me?
 
 If you made it this far, you now understand more about virtual device architecture than most people learn in their first year of embedded work. Give yourself a pat on the back. Or a coffee. Or both, you deserve it.
 
-## Next Steps
+## Next steps
 
 - **[Glossary](glossary.md)** - Quick reference for PCIe, DMA, MSI-X, and other jargon
 - **[Device Datasheet](phantomfpga-datasheet.md)** - How the device works and the complete register reference

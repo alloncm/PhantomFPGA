@@ -44,7 +44,7 @@
 #include "phantomfpga_uapi.h"
 
 /* Module metadata */
-MODULE_AUTHOR("Trainee");
+MODULE_AUTHOR("Me");
 MODULE_DESCRIPTION("PhantomFPGA v3.0 Frame Streaming Driver");
 MODULE_LICENSE("GPL");
 MODULE_VERSION("3.0");
@@ -206,7 +206,6 @@ static inline bool pfpga_validate_frame_crc(const void *frame)
 /*
  * Configure the descriptor ring address in the device.
  * Called after descriptor ring allocation.
- * (Unused in skeleton - trainees implement the call site)
  */
 static void __maybe_unused pfpga_configure_desc_ring(struct phantomfpga_dev *pfdev)
 {
@@ -227,7 +226,6 @@ static void __maybe_unused pfpga_configure_desc_ring(struct phantomfpga_dev *pfd
 /*
  * Apply frame streaming configuration to device registers.
  * Called from SET_CFG ioctl after validation.
- * (Unused in skeleton - trainees implement the call site)
  */
 static void __maybe_unused pfpga_apply_config(struct phantomfpga_dev *pfdev)
 {
@@ -250,7 +248,6 @@ static void __maybe_unused pfpga_apply_config(struct phantomfpga_dev *pfdev)
  *
  * After populating descriptors with buffer addresses, write the new
  * head index to tell the device how many are available.
- * (Unused in skeleton - trainees implement the call site)
  */
 static void __maybe_unused pfpga_submit_descriptors(struct phantomfpga_dev *pfdev, u32 count)
 {
@@ -272,7 +269,6 @@ static void __maybe_unused pfpga_submit_descriptors(struct phantomfpga_dev *pfde
 /*
  * Initialize all descriptors with buffer addresses.
  * Called once after buffer allocation.
- * (Unused in skeleton - trainees implement the call site)
  */
 static void __maybe_unused pfpga_init_descriptors(struct phantomfpga_dev *pfdev)
 {
@@ -369,7 +365,6 @@ static void pfpga_soft_reset(struct phantomfpga_dev *pfdev)
  *
  * Called when descriptors complete (IRQ coalescing thresholds met).
  * The driver should process completed descriptors and wake up waiters.
- * (Unused in skeleton - trainees connect this in MSI-X setup)
  */
 static irqreturn_t __maybe_unused pfpga_irq_complete(int irq, void *data)
 {
@@ -406,7 +401,6 @@ static irqreturn_t __maybe_unused pfpga_irq_complete(int irq, void *data)
  * MSI-X interrupt handler for errors (vector 1).
  *
  * Called on error conditions (DMA error, device error).
- * (Unused in skeleton - trainees connect this in MSI-X setup)
  */
 static irqreturn_t __maybe_unused pfpga_irq_error(int irq, void *data)
 {
@@ -433,7 +427,6 @@ static irqreturn_t __maybe_unused pfpga_irq_error(int irq, void *data)
  *
  * Called when device has frames to send but no descriptors available.
  * This means backpressure - consumer isn't keeping up with frame rate.
- * (Unused in skeleton - trainees connect this in MSI-X setup)
  */
 static irqreturn_t __maybe_unused pfpga_irq_no_desc(int irq, void *data)
 {
@@ -490,7 +483,7 @@ static int pfpga_release(struct inode *inode, struct file *file)
 	 *   A) Stop streaming on close (safer for cleanup)
 	 *   B) Keep streaming until explicit stop (allows multiple readers)
 	 *
-	 * For now, we don't auto-stop. The trainee can decide.
+	 * For now, we don't auto-stop. You can decide.
 	 */
 
 	dev_dbg(&pfdev->pdev->dev, "device closed\n");

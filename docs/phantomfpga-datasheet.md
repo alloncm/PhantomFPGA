@@ -1,4 +1,4 @@
-# PhantomFPGA Device Datasheet v3.0
+# PhantomFPGA device datasheet v3.0
 
 > "This is where the rubber meets the road. Or rather, where your code meets the hardware."
 
@@ -8,11 +8,11 @@ This document is your complete reference for the PhantomFPGA virtual PCIe device
 
 ---
 
-## Device Overview
+## Device overview
 
 PhantomFPGA is a PCIe device that streams fixed-size data frames to host memory via scatter-gather DMA. Think of it as a data firehose: the device has data it wants to send you, and your job is to catch it.
 
-### Block Diagram
+### Block diagram
 
 ```
 +------------------------------------------------------------------+
@@ -44,7 +44,7 @@ PhantomFPGA is a PCIe device that streams fixed-size data frames to host memory 
 +------------------------------------------------------------------+
 ```
 
-### Key Characteristics
+### Key characteristics
 
 | Parameter | Value | Notes |
 |-----------|-------|-------|
@@ -57,9 +57,9 @@ PhantomFPGA is a PCIe device that streams fixed-size data frames to host memory 
 
 ---
 
-## How the Device Works
+## How the device works
 
-### Frame Transmission
+### Frame transmission
 
 The device contains 250 pre-loaded data frames, each exactly 5120 bytes. When you start the device (set CTRL.RUN), it begins transmitting these frames in order, looping back to frame 0 after frame 249.
 
@@ -76,7 +76,7 @@ Frame: [0]     [1]     [2]     [3]     [4]     ...
 
 Each frame is transmitted atomically - the device doesn't send partial frames. If a descriptor isn't available when it's time to send, the frame is dropped (not queued).
 
-### The Descriptor Ring
+### The descriptor ring
 
 Instead of giving the device one big buffer, you give it a list of smaller buffers via a "descriptor ring". Each descriptor says: "here's a buffer at address X with size Y, put a frame there."
 
@@ -94,7 +94,7 @@ Ring state:  [completed] [completed] [pending] [pending] [free] [free]
 **Pending** = descriptors submitted but not yet used
 **Free** = slots you can fill with new descriptors
 
-### Backpressure and Drops
+### Backpressure and drops
 
 Real hardware doesn't wait. If the device has a frame ready and you haven't given it a descriptor to use, the frame is dropped. This mimics real streaming devices (cameras, network cards, sensors) where data keeps coming whether you're ready or not.
 
@@ -110,7 +110,7 @@ IRQ_STATUS.NO_DESC is set (triggers interrupt if enabled).
 2. Lower the frame rate (give yourself more time)
 3. Fix your driver's latency (process completions faster)
 
-### Interrupt Coalescing
+### Interrupt coalescing
 
 Without coalescing: 25 fps = 25 interrupts/second. That's fine for a demo.
 
@@ -122,21 +122,24 @@ Coalescing (count=4):   ....IRQ....IRQ                   (2 IRQs)
 Coalescing (timeout):   ........IRQ                      (1 IRQ after timeout)
 ```
 
-### Reset Behavior
+### Reset behavior
 
 Writing CTRL.RESET performs a soft reset:
 - Stops transmission immediately
 - Clears HEAD and TAIL indices to 0
-- Resets all statistics counters
+- Clears descriptor ring address to 0
+- Resets ring size to default (256)
 - Restores FRAME_RATE to default (25)
-- Preserves descriptor ring address (no need to reprogram)
+- Resets IRQ coalescing to defaults (count=8, timeout=40000us)
+- Resets all statistics counters
+- Disables fault injection
 - RESET bit auto-clears when complete
 
-After reset, you need to resubmit descriptors and restart.
+After reset, you need to reprogram the descriptor ring address, resubmit descriptors, and restart.
 
 ---
 
-## PCI Configuration
+## PCI configuration
 
 | Field | Value | Notes |
 |-------|-------|-------|
@@ -160,7 +163,7 @@ MSI-X table and PBA are located within BAR0:
 
 ---
 
-## The Big Picture: Scatter-Gather DMA
+## The big picture: scatter-gather DMA
 
 Before we dive into registers, let's understand what we're building.
 
@@ -169,7 +172,7 @@ Scatter-Gather DMA: "Here's a list of buffers, figure it out."
 
 Why is SG-DMA better? Because real kernels can't always give you giant contiguous memory chunks. With SG-DMA, you allocate many smaller buffers (often just single pages) and tell the device where they all are.
 
-### How It Works
+### How it works
 
 ```
 Driver (you)                         Device
@@ -204,7 +207,7 @@ Driver (you)                         Device
 
 The key insight: HEAD is how you "submit" work to the device. TAIL is how the device tells you it finished. The gap between them is your pending work.
 
-### The Descriptor Ring
+### The descriptor ring
 
 ```
                     +---+---+---+---+---+---+---+---+
@@ -224,7 +227,7 @@ Why "ring_size - 1"? We keep one slot empty to distinguish "full" from "empty" (
 
 ---
 
-## Register Map
+## Register map
 
 All registers are 32-bit and must be accessed with 32-bit aligned reads/writes.
 
@@ -257,9 +260,9 @@ All registers are 32-bit and must be accessed with 32-bit aligned reads/writes.
 
 ---
 
-## Register Details
+## Register details
 
-### DEV_ID (0x000) - Device Identification
+### DEV_ID (0x000) - device identification
 
 **Read-only**
 
@@ -274,7 +277,7 @@ Always returns `0xF00DFACE`. Use this to verify the device is present and respon
 
 ---
 
-### DEV_VER (0x004) - Device Version
+### DEV_VER (0x004) - device version
 
 **Read-only**
 
@@ -296,7 +299,7 @@ Current value: `0x00030000` = version 3.0.0
 
 ---
 
-### CTRL (0x008) - Control Register
+### CTRL (0x008) - control register
 
 **Read/Write**
 
@@ -322,7 +325,7 @@ Current value: `0x00030000` = version 3.0.0
 
 ---
 
-### STATUS (0x00C) - Status Register
+### STATUS (0x00C) - status register
 
 **Read-only**
 
@@ -344,7 +347,7 @@ Current value: `0x00030000` = version 3.0.0
 
 ---
 
-### FRAME_SIZE (0x010) - Frame Size
+### FRAME_SIZE (0x010) - frame size
 
 **Read-only**
 
@@ -359,7 +362,7 @@ Fixed at 5120 bytes. This is the size of each frame the device transmits. Read-o
 
 ---
 
-### FRAME_COUNT (0x014) - Frame Count
+### FRAME_COUNT (0x014) - frame count
 
 **Read-only**
 
@@ -374,7 +377,7 @@ Total number of frames available in the device. The device loops through these c
 
 ---
 
-### FRAME_RATE (0x018) - Frame Rate
+### FRAME_RATE (0x018) - frame rate
 
 **Read/Write**
 
@@ -399,7 +402,7 @@ Can be changed while running - takes effect on next frame interval.
 
 ---
 
-### CURRENT_FRAME (0x01C) - Current Frame Index
+### CURRENT_FRAME (0x01C) - current frame index
 
 **Read-only**
 
@@ -414,7 +417,7 @@ The frame index currently being transmitted. Wraps from 249 back to 0. Useful fo
 
 ---
 
-### DESC_RING_LO (0x020) - Descriptor Ring Address Low
+### DESC_RING_LO (0x020) - descriptor ring address low
 
 **Read/Write**
 
@@ -429,7 +432,7 @@ Lower 32 bits of the descriptor ring physical address. Must be 32-byte aligned (
 
 ---
 
-### DESC_RING_HI (0x024) - Descriptor Ring Address High
+### DESC_RING_HI (0x024) - descriptor ring address high
 
 **Read/Write**
 
@@ -451,7 +454,7 @@ pfpga_write32(pfdev, PHANTOMFPGA_REG_DESC_RING_HI, upper_32_bits(ring_dma));
 
 ---
 
-### DESC_RING_SIZE (0x028) - Descriptor Ring Size
+### DESC_RING_SIZE (0x028) - descriptor ring size
 
 **Read/Write**
 
@@ -472,11 +475,11 @@ Number of descriptors in the ring.
 
 **Must be a power of 2** for efficient index wrapping. Non-power-of-2 values are rounded down to the nearest power of 2.
 
-Set this before starting transmission. The ring must have at least this many valid descriptor entries, each pointing to a buffer >= FRAME_SIZE bytes.
+Set this before starting transmission. The ring must have at least this many valid descriptor entries, each pointing to a buffer >= FRAME_SIZE + 16 bytes (frame data + completion writeback).
 
 ---
 
-### DESC_HEAD (0x02C) - Descriptor Head Index
+### DESC_HEAD (0x02C) - descriptor head index
 
 **Read/Write**
 
@@ -503,7 +506,7 @@ pfpga_write32(pfdev, PHANTOMFPGA_REG_DESC_HEAD, (next + 1) & (ring_size - 1));
 
 ---
 
-### DESC_TAIL (0x030) - Descriptor Tail Index
+### DESC_TAIL (0x030) - descriptor tail index
 
 **Read-only**
 
@@ -529,7 +532,7 @@ while (pfdev->last_tail != tail) {
 
 ---
 
-### IRQ_STATUS (0x034) - Interrupt Status
+### IRQ_STATUS (0x034) - interrupt status
 
 **Read/Write (Write-1-to-Clear)**
 
@@ -551,7 +554,7 @@ while (pfdev->last_tail != tail) {
 
 ---
 
-### IRQ_MASK (0x038) - Interrupt Mask
+### IRQ_MASK (0x038) - interrupt mask
 
 **Read/Write**
 
@@ -578,7 +581,7 @@ An interrupt is delivered only when:
 
 ---
 
-### IRQ_COALESCE (0x03C) - Interrupt Coalescing
+### IRQ_COALESCE (0x03C) - interrupt coalescing
 
 **Read/Write**
 
@@ -612,7 +615,7 @@ pfpga_write32(pfdev, PHANTOMFPGA_REG_IRQ_COALESCE, coalesce);
 
 ---
 
-### STAT_FRAMES_TX (0x040) - Frames Transmitted
+### STAT_FRAMES_TX (0x040) - frames transmitted
 
 **Read-only**
 
@@ -620,7 +623,7 @@ Running count of frames successfully DMA'd to host memory since last reset.
 
 ---
 
-### STAT_FRAMES_DROP (0x044) - Frames Dropped
+### STAT_FRAMES_DROP (0x044) - frames dropped
 
 **Read-only**
 
@@ -628,7 +631,7 @@ Frames the device wanted to send but couldn't because no descriptors were availa
 
 ---
 
-### STAT_BYTES_LO/HI (0x048/0x04C) - Total Bytes
+### STAT_BYTES_LO/HI (0x048/0x04C) - total bytes
 
 **Read-only**
 
@@ -636,7 +639,7 @@ Frames the device wanted to send but couldn't because no descriptors were availa
 
 ---
 
-### STAT_DESC_COMPL (0x050) - Descriptors Completed
+### STAT_DESC_COMPL (0x050) - descriptors completed
 
 **Read-only**
 
@@ -644,7 +647,7 @@ Total number of descriptors the device has completed. Should equal STAT_FRAMES_T
 
 ---
 
-### STAT_ERRORS (0x054) - Error Count
+### STAT_ERRORS (0x054) - error count
 
 **Read-only**
 
@@ -652,7 +655,7 @@ DMA errors, timeout errors, anything that went wrong. Non-zero here means check 
 
 ---
 
-### FAULT_INJECT (0x058) - Fault Injection Control
+### FAULT_INJECT (0x058) - fault injection control
 
 **Read/Write**
 
@@ -679,7 +682,7 @@ Enable these to test your error handling:
 
 ---
 
-### FAULT_RATE (0x05C) - Fault Probability
+### FAULT_RATE (0x05C) - fault probability
 
 **Read/Write**
 
@@ -696,7 +699,7 @@ Set to lower values for more aggressive testing. Set to 0 to disable probability
 
 ---
 
-## Descriptor Format
+## Descriptor format
 
 Each descriptor is 32 bytes. The ring is a contiguous array of these.
 
@@ -712,7 +715,7 @@ Offset  Size   Field        Description
         32     TOTAL
 ```
 
-### Control Flags
+### Control flags
 
 | Bit | Name | Description |
 |-----|------|-------------|
@@ -726,7 +729,7 @@ Offset  Size   Field        Description
 
 **IRQ:** Set this if you want an interrupt specifically for this descriptor. Combined with coalescing, lets you control exactly when you wake up.
 
-### C Structure
+### C structure
 
 ```c
 struct phantomfpga_sg_desc {
@@ -740,7 +743,7 @@ struct phantomfpga_sg_desc {
 
 ---
 
-## Completion Writeback
+## Completion writeback
 
 When a descriptor completes, the device writes a 16-byte completion structure at the END of the destination buffer (buffer + length - 16):
 
@@ -754,7 +757,7 @@ Offset  Size   Field          Description
         16     TOTAL
 ```
 
-### C Structure
+### C structure
 
 ```c
 struct phantomfpga_completion {
@@ -768,7 +771,7 @@ struct phantomfpga_completion {
 
 ---
 
-## Frame Format
+## Frame format
 
 Each frame transmitted by the device is exactly 5120 bytes:
 
@@ -785,7 +788,7 @@ Offset  Size   Field        Description
         5120   TOTAL
 ```
 
-### Frame Header (16 bytes)
+### Frame header (16 bytes)
 
 ```c
 struct phantomfpga_frame_header {
@@ -810,9 +813,9 @@ if (expected_crc != computed_crc) {
 
 ---
 
-## Programming Sequence
+## Programming sequence
 
-### Driver Initialization
+### Driver initialization
 
 ```
 1. Probe: pci_enable_device()
@@ -830,7 +833,7 @@ if (expected_crc != computed_crc) {
 13. Create char device: cdev_add(), device_create()
 ```
 
-### Starting Transmission
+### Starting transmission
 
 ```
 1. Initialize all descriptors in ring
@@ -848,7 +851,7 @@ if (expected_crc != computed_crc) {
 4. Start: CTRL = RUN | IRQ_EN
 ```
 
-### Interrupt Handler
+### Interrupt handler
 
 ```
 1. Read IRQ_STATUS
@@ -886,9 +889,9 @@ if (expected_crc != computed_crc) {
 
 ---
 
-## Quick Reference Card
+## Quick reference card
 
-### Registers (Offset from BAR0)
+### Registers (offset from BAR0)
 
 ```
 0x000 DEV_ID          R     Device ID (0xF00DFACE)
@@ -927,7 +930,7 @@ if (expected_crc != computed_crc) {
 +18: reserved  u64   Alignment padding
 ```
 
-### Frame Header (16 bytes)
+### Frame header (16 bytes)
 
 ```
 +00: magic     u32   0xF00DFACE
@@ -936,7 +939,7 @@ if (expected_crc != computed_crc) {
 +10: data...         5104 bytes (4995 data + 105 padding + 4 CRC)
 ```
 
-### IOCTLs (Magic 'P')
+### IOCTLs (magic 'P')
 
 ```
 SET_CFG          _IOW('P', 1, config)   Configure device
@@ -952,7 +955,7 @@ SET_FAULT        _IOW('P', 9, fault)    Configure fault injection
 
 ---
 
-## Error Codes
+## Error codes
 
 Standard errno values:
 

@@ -1,4 +1,4 @@
-# PhantomFPGA Driver Development Guide
+# PhantomFPGA driver development guide
 
 > "The best time to write a kernel driver was 10 years ago. The second best time is now, with this guide in front of you."
 
@@ -14,24 +14,26 @@ Before starting, make sure you:
 2. Have read [phantomfpga-datasheet.md](phantomfpga-datasheet.md) for device operation and registers
 3. Have a working build environment (QEMU + guest VM)
 4. Understand basic C programming and Linux kernel concepts
+5. Got 5 liters of coffee handy
 
 **Recommended background reading:**
 - Linux Device Drivers, 3rd Edition (freely available online)
 - kernel.org documentation on PCI, DMA, and interrupts
 - `Documentation/driver-api/` in the kernel source
+- Come on, at least pretend you will look into those...
 
-## The Skeleton Driver
+## The skeleton driver
 
 The skeleton driver at `driver/phantomfpga_drv.c` provides:
 
 - Complete module structure (init/exit, probe/remove)
 - Data structure definitions
-- Function signatures with TODO comments
-- Working parts (PCI enable, BAR mapping, device verification)
+- Function signatures with detailed TODO comments
+- Working parts (PCI enable, BAR mapping, device verification, chardev creation)
 
-Your job is to complete the TODOs to make it fully functional.
+Your job is to complete the TODOs to make it fully functional. Each TODO has step-by-step instructions -- this guide explains the concepts behind those steps.
 
-## Development Workflow
+## Development workflow
 
 1. **Build the driver** in the guest:
    ```bash
@@ -56,859 +58,316 @@ Your job is to complete the TODOs to make it fully functional.
 
 **Pro tip:** Keep a second terminal with `dmesg -w` running to see kernel messages in real-time.
 
+### One step at a time
+
+Kernel development rewards patience and punishes ambition. Don't implement three parts at once and then wonder which one broke things. The cycle is:
+
+1. Implement one thing
+2. Build, load, verify it works
+3. Celebrate (optional but recommended)
+4. Move to the next thing
+
+If step 2 fails, you know exactly where to look. If you skipped ahead and implemented five things, well... enjoy your afternoon.
+
 > [!NOTE]
 > **On the eternal tabs vs spaces debate:** This is kernel code. Tabs won. The Linux kernel coding style mandates hard tabs for indentation, and arguing about it is about as productive as explaining to your cat why it shouldn't sit on your keyboard. If seeing tabs in source files makes you uncomfortable, consider it exposure therapy. You'll survive. Probably.
 
 ---
 
-## Part 1: DMA Buffer Allocation
+## Part 1: Descriptor ring and buffer allocation
 
-**Goal:** Allocate coherent DMA memory for the ring buffer.
+**Goal:** Allocate coherent DMA memory for the SG-DMA descriptor ring and per-descriptor frame buffers.
+
+**Skeleton function:** `pfpga_alloc_descriptors()`
 
 ### Background
 
-DMA (Direct Memory Access) allows the device to read/write system memory without CPU involvement. The PhantomFPGA device writes frames directly to a ring buffer in guest memory.
+The v3 device uses scatter-gather DMA. Instead of one big contiguous buffer, you provide a ring of descriptors, each pointing to its own buffer. The device reads descriptors to find out where to write frames.
 
-For DMA to work, you need:
-1. **Physically contiguous memory** - the device sees physical addresses
-2. **Cache coherency** - CPU and device see the same data
-3. **Both addresses** - virtual (for driver) and physical (for device)
+You need to allocate two types of DMA memory:
 
-### Implementation
+1. **The descriptor ring** -- an array of `struct phantomfpga_sg_desc` entries. The device reads these to find buffer addresses.
+2. **Per-descriptor buffers** -- one buffer per descriptor where the device writes frame data + completion status.
 
-Find `pfpga_alloc_dma_buffer()` in the skeleton and implement:
+Both need to be allocated with `dma_alloc_coherent()` because the device accesses them via DMA. This gives you both a kernel virtual address (for your code) and a DMA/physical address (for the device).
 
-```c
-static int pfpga_alloc_dma_buffer(struct phantomfpga_dev *pfdev, size_t size)
-{
-    /* Free existing buffer if any */
-    if (pfdev->dma_buf) {
-        dma_free_coherent(&pfdev->pdev->dev, pfdev->dma_size,
-                          pfdev->dma_buf, pfdev->dma_handle);
-    }
+### Things to think about
 
-    /* Allocate new coherent DMA buffer */
-    pfdev->dma_buf = dma_alloc_coherent(&pfdev->pdev->dev, size,
-                                        &pfdev->dma_handle, GFP_KERNEL);
-    if (!pfdev->dma_buf) {
-        dev_err(&pfdev->pdev->dev, "failed to allocate %zu bytes DMA buffer\n",
-                size);
-        return -ENOMEM;
-    }
-
-    pfdev->dma_size = size;
-
-    dev_info(&pfdev->pdev->dev, "DMA buffer allocated: %zu bytes at phys 0x%llx\n",
-             size, (unsigned long long)pfdev->dma_handle);
-
-    return 0;
-}
-```
-
-Also implement `pfpga_free_dma_buffer()`:
-
-```c
-static void pfpga_free_dma_buffer(struct phantomfpga_dev *pfdev)
-{
-    if (pfdev->dma_buf) {
-        dma_free_coherent(&pfdev->pdev->dev, pfdev->dma_size,
-                          pfdev->dma_buf, pfdev->dma_handle);
-        pfdev->dma_buf = NULL;
-        pfdev->dma_handle = 0;
-        pfdev->dma_size = 0;
-    }
-}
-```
-
-### Key Points
-
-- `dma_alloc_coherent()` returns a virtual address for driver use
-- `pfdev->dma_handle` is the physical/bus address for the device
-- Use `GFP_KERNEL` - we can sleep during allocation
-- Always check for NULL return (allocation failure)
-- Balance every alloc with a free on error paths and remove
+- Each buffer must fit a full frame (5120 bytes) plus the completion writeback (16 bytes).
+- The descriptor ring is a contiguous array -- one `dma_alloc_coherent()` call.
+- The per-descriptor buffers are individual allocations -- loop over `desc_count`.
+- If any allocation fails midway, you need to clean up everything you already allocated. The classic goto-based error unwinding pattern is your friend here.
+- Don't forget the corresponding `pfpga_free_descriptors()` -- balance every alloc with a free.
 
 ### Verification
 
-After loading the driver:
+After loading the driver, you should see allocation messages in dmesg:
 ```bash
-dmesg | grep "DMA buffer"
-# Should show allocation message with address
+dmesg | grep phantomfpga
+```
+
+Also `rmmod` and re-`insmod` a couple of times. Watch dmesg for any warnings about leaked memory or double frees. Getting alloc/free right before moving on saves you from mysterious crashes later.
+
+---
+
+## Part 2: Descriptor ring setup
+
+**Goal:** Tell the device where the descriptor ring lives in memory and initialize the descriptors.
+
+**Skeleton functions:** `pfpga_configure_desc_ring()`, `pfpga_init_descriptors()`
+
+### Background
+
+The device needs three things from you before it can use the descriptor ring:
+
+1. The physical address of the ring (64-bit, split across two 32-bit registers)
+2. The ring size (number of descriptors)
+3. Each descriptor populated with its buffer's DMA address and size
+
+After initialization, you submit the descriptors by writing the HEAD register. This tells the device "I've prepared descriptors up to this index, go ahead and use them."
+
+### Things to think about
+
+- The ring address is 64 bits but the registers are 32 bits each. Use `lower_32_bits()` and `upper_32_bits()`.
+- When initializing descriptors, clear the control field (especially the COMPLETED flag) and set the buffer address and length.
+- Leave one descriptor slot empty -- it's how you distinguish a full ring from an empty one.
+- The `pfpga_submit_descriptors()` function updates HEAD. You'll call it here and again later when recycling completed descriptors.
+
+### Verify before moving on
+
+After programming the ring, read back the registers with `devmem` to confirm the device actually has the right address and size. A wrong address here means silent DMA corruption later -- much harder to debug.
+
+```bash
+devmem $((0x${BAR0} + 0x020))   # DESC_RING_LO
+devmem $((0x${BAR0} + 0x024))   # DESC_RING_HI
+devmem $((0x${BAR0} + 0x028))   # DESC_RING_SIZE
 ```
 
 ---
 
-## Part 2: Tell the Device About DMA
+## Part 3: Configuration and start/stop
 
-**Goal:** Program the device's DMA address registers.
+**Goal:** Apply frame streaming configuration and control transmission.
 
-### Implementation
+**Skeleton functions:** `pfpga_apply_config()`, `pfpga_start_streaming()`, `pfpga_stop_streaming()`
 
-Find `pfpga_configure_dma()` and implement:
+### Background
 
-```c
-static void pfpga_configure_dma(struct phantomfpga_dev *pfdev)
-{
-    /* Split 64-bit DMA address into two 32-bit writes */
-    pfpga_write32(pfdev, PHANTOMFPGA_REG_DMA_ADDR_LO,
-                  lower_32_bits(pfdev->dma_handle));
-    pfpga_write32(pfdev, PHANTOMFPGA_REG_DMA_ADDR_HI,
-                  upper_32_bits(pfdev->dma_handle));
+The device has configurable frame rate and IRQ coalescing. Configuration happens via the SET_CFG ioctl, which validates parameters, allocates resources, and writes registers.
 
-    /* Tell device the total buffer size */
-    pfpga_write32(pfdev, PHANTOMFPGA_REG_DMA_SIZE, pfdev->dma_size);
+Starting the device means setting the CTRL.RUN and CTRL.IRQ_EN bits. Stopping means clearing CTRL.RUN.
 
-    dev_dbg(&pfdev->pdev->dev, "DMA configured: addr=0x%llx size=%u\n",
-            (unsigned long long)pfdev->dma_handle, pfdev->dma_size);
-}
-```
+### Things to think about
 
-### Key Points
+- Frame size is fixed at 5120 bytes (read-only register). Don't try to configure it.
+- Frame rate is the main knob: 1-60 fps.
+- IRQ coalescing is a packed register: count in the low 16 bits, timeout in the high 16 bits. There's a helper function `phantomfpga_irq_coalesce_pack()` in the register header.
+- Before starting, clear any stale IRQ_STATUS bits and reset the ring indices.
+- When stopping, wake up any processes sleeping in poll/read -- they need to know streaming ended.
+- The `pfpga_soft_reset()` function is similar but more aggressive: it resets everything back to defaults. Remember that reset clears the descriptor ring address too, so you'd need to reprogram it.
 
-- 64-bit addresses need two 32-bit writes (many older devices work this way)
-- `lower_32_bits()` and `upper_32_bits()` are kernel helpers
-- Call this after allocating the DMA buffer
+### Verify before moving on
+
+Test start/stop in isolation before adding interrupts. After `pfpga_start_streaming()`, read the STATUS register -- it should show the device as running. After stop, it should be idle again. If this doesn't work, interrupts won't either, and you'd be debugging the wrong layer.
 
 ---
 
-## Part 3: Apply Configuration
+## Part 4: MSI-X interrupt setup
 
-**Goal:** Write frame parameters to device registers.
+**Goal:** Allocate and connect the three MSI-X interrupt vectors.
 
-### Implementation
+**Skeleton function:** `pfpga_setup_msix()`, `pfpga_teardown_msix()`
 
-Find `pfpga_apply_config()` and implement:
+### Background
 
-```c
-static void pfpga_apply_config(struct phantomfpga_dev *pfdev)
-{
-    /* Write configuration registers */
-    pfpga_write32(pfdev, PHANTOMFPGA_REG_FRAME_SIZE, pfdev->frame_size);
-    pfpga_write32(pfdev, PHANTOMFPGA_REG_FRAME_RATE, pfdev->frame_rate);
-    pfpga_write32(pfdev, PHANTOMFPGA_REG_WATERMARK, pfdev->watermark);
-    pfpga_write32(pfdev, PHANTOMFPGA_REG_RING_SIZE, pfdev->ring_size);
+The device has 3 MSI-X vectors:
 
-    /* Reset consumer index */
-    pfpga_write32(pfdev, PHANTOMFPGA_REG_CONS_IDX, 0);
+| Vector | Handler | Purpose |
+|--------|---------|---------|
+| 0 | Complete | Descriptors completed (coalescing threshold met) |
+| 1 | Error | DMA or device error |
+| 2 | No_desc | No descriptors available, frame dropped |
 
-    /* Enable watermark interrupt */
-    pfpga_write32(pfdev, PHANTOMFPGA_REG_IRQ_MASK, PHANTOMFPGA_IRQ_WATERMARK);
-}
-```
+MSI-X gives each interrupt its own vector, so the handler immediately knows *why* it was called without reading a status register. Though you should still read IRQ_STATUS to confirm and clear the interrupt (W1C).
 
-### Key Points
+### Things to think about
 
-- Only apply config when device is stopped
-- Reset consumer index to sync with device
-- Enable the interrupts you want to receive
+- Request all 3 vectors with `pci_alloc_irq_vectors()`. If MSI-X isn't available, fall back to MSI or legacy (fewer vectors, shared handler).
+- Use `pci_irq_vector()` to get the actual IRQ number for each vector.
+- Each vector gets its own `request_irq()` call with its own handler function.
+- Error paths are tricky here: if the third `request_irq()` fails, you need to `free_irq()` the first two and `pci_free_irq_vectors()`. The skeleton's error labels handle this.
+- Teardown is the reverse: free IRQs first, then free vectors.
 
----
+### Verify before moving on
 
-## Part 4: Soft Reset
-
-**Goal:** Implement device reset for clean initialization.
-
-### Implementation
-
-Find `pfpga_soft_reset()` and implement:
-
-```c
-static void pfpga_soft_reset(struct phantomfpga_dev *pfdev)
-{
-    /* Trigger soft reset */
-    pfpga_write32(pfdev, PHANTOMFPGA_REG_CTRL, PHANTOMFPGA_CTRL_RESET);
-
-    /* Reset bit is self-clearing, wait briefly */
-    udelay(10);
-
-    /* Reset local state */
-    pfdev->streaming = false;
-    pfdev->prod_idx = 0;
-    pfdev->cons_idx = 0;
-
-    dev_dbg(&pfdev->pdev->dev, "device reset complete\n");
-}
-```
-
-### Key Points
-
-- The RESET bit clears itself after the reset completes
-- A small delay ensures the reset has time to complete
-- Reset your driver's cached state too
+After setup, check `/proc/interrupts` -- you should see three `phantomfpga` entries. If you see zero, MSI-X allocation failed silently. If you see one, you got legacy mode. Sort this out before writing the actual handlers.
 
 ---
 
-## Part 5: Start/Stop Streaming
+## Part 5: Interrupt handlers
 
-**Goal:** Control frame production.
+**Goal:** Handle completion, error, and no-descriptor interrupts.
 
-### Start Implementation
+**Skeleton functions:** `pfpga_irq_complete()`, `pfpga_irq_error()`, `pfpga_irq_no_desc()`
 
-Find `pfpga_start_streaming()`:
+### Background
 
-```c
-static int pfpga_start_streaming(struct phantomfpga_dev *pfdev)
-{
-    u32 ctrl;
+The completion handler is the hot path -- it runs every time the coalescing threshold triggers. It needs to:
 
-    /* Validate state */
-    if (!pfdev->configured) {
-        dev_err(&pfdev->pdev->dev, "cannot start: not configured\n");
-        return -EINVAL;
-    }
+1. Confirm the interrupt (read IRQ_STATUS)
+2. Clear it (write back to IRQ_STATUS -- W1C semantics)
+3. Update the driver's view of which descriptors are done
+4. Wake up anyone waiting for data
 
-    if (pfdev->streaming) {
-        dev_warn(&pfdev->pdev->dev, "already streaming\n");
-        return -EBUSY;
-    }
+The error and no_desc handlers are simpler -- log, clear, wake waiters.
 
-    /* Reset indices */
-    pfdev->prod_idx = 0;
-    pfdev->cons_idx = 0;
-    pfpga_write32(pfdev, PHANTOMFPGA_REG_CONS_IDX, 0);
+### Things to think about
 
-    /* Clear any pending interrupts */
-    pfpga_write32(pfdev, PHANTOMFPGA_REG_IRQ_STATUS, PHANTOMFPGA_IRQ_ALL);
+- You're in hard IRQ context. No sleeping, no `mutex_lock`, no `copy_to_user`. Keep it fast.
+- Use `spin_lock()` (not `spin_lock_irqsave()`) in the IRQ handler -- you're already interrupt-disabled.
+- The device updates DESC_TAIL when it completes descriptors. Read it and store it in `shadow_tail` so the process context (read/poll) can see what's available.
+- Return `IRQ_HANDLED` if you processed the interrupt, `IRQ_NONE` if it wasn't yours.
+- `dev_warn_ratelimited()` is your friend for the error/no_desc handlers -- don't spam the log.
 
-    /* Start device with interrupts enabled */
-    ctrl = PHANTOMFPGA_CTRL_START | PHANTOMFPGA_CTRL_IRQ_EN;
-    pfpga_write32(pfdev, PHANTOMFPGA_REG_CTRL, ctrl);
+### Verify before moving on
 
-    pfdev->streaming = true;
-
-    dev_info(&pfdev->pdev->dev, "streaming started\n");
-    return 0;
-}
-```
-
-### Stop Implementation
-
-Find `pfpga_stop_streaming()`:
-
-```c
-static int pfpga_stop_streaming(struct phantomfpga_dev *pfdev)
-{
-    u32 ctrl;
-
-    /* Read current control value and clear START bit */
-    ctrl = pfpga_read32(pfdev, PHANTOMFPGA_REG_CTRL);
-    ctrl &= ~PHANTOMFPGA_CTRL_START;
-    pfpga_write32(pfdev, PHANTOMFPGA_REG_CTRL, ctrl);
-
-    pfdev->streaming = false;
-
-    /* Wake up any waiters - they'll see streaming=false */
-    wake_up_interruptible(&pfdev->wait_queue);
-
-    dev_info(&pfdev->pdev->dev, "streaming stopped\n");
-    return 0;
-}
-```
-
-### Key Points
-
-- Validate state before starting
-- Clear pending IRQs before enabling new ones
-- Wake waiters on stop so they can exit gracefully
+Start with minimal handlers that just log and clear. Start the device, let it run for a second, stop it. You should see interrupt counts going up in `/proc/interrupts` and your log messages in dmesg. If interrupts arrive but your handler doesn't run, something went wrong with `request_irq()`. If the handler runs but the device keeps re-interrupting, you're not clearing IRQ_STATUS properly.
 
 ---
 
-## Part 6: MSI-X Interrupt Setup
+## Part 6: Read and poll
 
-**Goal:** Set up interrupt handlers for device notifications.
+**Goal:** Let userspace consume frames via read() and wait for data via poll().
 
-### Implementation
+**Skeleton functions:** `pfpga_read()`, `pfpga_poll()`
 
-Find `pfpga_setup_msix()`:
+### Background
 
-```c
-static int pfpga_setup_msix(struct phantomfpga_dev *pfdev)
-{
-    struct pci_dev *pdev = pfdev->pdev;
-    int ret;
+The read path is the main way userspace gets frame data. It needs to:
 
-    /* Request MSI-X vectors */
-    ret = pci_alloc_irq_vectors(pdev, PHANTOMFPGA_MSIX_VECTORS,
-                                PHANTOMFPGA_MSIX_VECTORS, PCI_IRQ_MSIX);
-    if (ret < 0) {
-        /* Fall back to single MSI or legacy */
-        dev_warn(&pdev->dev, "MSI-X not available, trying MSI\n");
-        ret = pci_alloc_irq_vectors(pdev, 1, 1,
-                                    PCI_IRQ_MSI | PCI_IRQ_LEGACY);
-        if (ret < 0) {
-            dev_err(&pdev->dev, "failed to allocate IRQ vectors: %d\n", ret);
-            return ret;
-        }
-    }
+1. Wait for completed descriptors (if blocking mode)
+2. Find the next completed descriptor
+3. Check the completion status
+4. Optionally validate the frame CRC
+5. Copy frame data to userspace
+6. Reset the descriptor and resubmit it for reuse
 
-    pfdev->num_vectors = ret;
+The poll path just reports whether there's data available -- it doesn't consume anything.
 
-    /* Get IRQ numbers */
-    pfdev->irq_watermark = pci_irq_vector(pdev, 0);
-    if (pfdev->num_vectors > 1) {
-        pfdev->irq_overrun = pci_irq_vector(pdev, 1);
-    } else {
-        pfdev->irq_overrun = -1;  /* Shared with watermark */
-    }
+### Things to think about
 
-    /* Request watermark IRQ */
-    ret = request_irq(pfdev->irq_watermark, pfpga_irq_watermark,
-                      0, DRIVER_NAME "-watermark", pfdev);
-    if (ret) {
-        dev_err(&pdev->dev, "failed to request watermark IRQ: %d\n", ret);
-        goto err_free_vectors;
-    }
+- The `consumer` index tracks which descriptor the driver will consume next. It's separate from `desc_tail`/`shadow_tail` (which track what the device has completed).
+- For blocking reads, use `wait_event_interruptible()`. The condition should check if consumer has fallen behind shadow_tail.
+- Check `file->f_flags & O_NONBLOCK` -- return -EAGAIN if non-blocking and no data.
+- After consuming a frame, clear the descriptor's COMPLETED flag and resubmit it by advancing HEAD. This keeps the pipeline full.
+- The completion writeback lives at the end of the buffer. The helper `phantomfpga_completion_ptr()` calculates its location.
+- CRC validation: the helper functions are in the register header. Using them is optional but recommended -- how else will you know if fault injection is working?
+- For poll: `poll_wait()` registers your wait queue, then return EPOLLIN if data is available, EPOLLHUP if not streaming.
 
-    /* Request overrun IRQ if separate */
-    if (pfdev->irq_overrun >= 0) {
-        ret = request_irq(pfdev->irq_overrun, pfpga_irq_overrun,
-                          0, DRIVER_NAME "-overrun", pfdev);
-        if (ret) {
-            dev_err(&pdev->dev, "failed to request overrun IRQ: %d\n", ret);
-            goto err_free_watermark;
-        }
-    }
+### Verify before moving on
 
-    dev_info(&pdev->dev, "MSI-X setup complete: %d vectors\n",
-             pfdev->num_vectors);
-    return 0;
-
-err_free_watermark:
-    free_irq(pfdev->irq_watermark, pfdev);
-err_free_vectors:
-    pci_free_irq_vectors(pdev);
-    pfdev->num_vectors = 0;
-    return ret;
-}
-```
-
-Don't forget `pfpga_teardown_msix()`:
-
-```c
-static void pfpga_teardown_msix(struct phantomfpga_dev *pfdev)
-{
-    if (pfdev->irq_overrun >= 0)
-        free_irq(pfdev->irq_overrun, pfdev);
-
-    if (pfdev->irq_watermark >= 0)
-        free_irq(pfdev->irq_watermark, pfdev);
-
-    if (pfdev->num_vectors > 0)
-        pci_free_irq_vectors(pfdev->pdev);
-
-    pfdev->num_vectors = 0;
-    pfdev->irq_watermark = -1;
-    pfdev->irq_overrun = -1;
-}
-```
-
-### Key Points
-
-- Try MSI-X first, fall back to MSI or legacy
-- Each vector gets its own handler
-- Match every `request_irq()` with `free_irq()`
-- Error paths must clean up partial allocations
+Get `read()` working before touching `poll()`. Write a tiny test program (or use the app) that opens the device, starts streaming, and calls `read()` in a loop. Print the first few bytes of each frame. If you see data that looks reasonable, you're in great shape. If you see garbage or zeros, check the completion status field first -- it tells you what the device thinks happened.
 
 ---
 
-## Part 7: Interrupt Handlers
+## Part 7: Memory mapping
 
-**Goal:** Handle device interrupts to wake waiting processes.
+**Goal:** Allow userspace to mmap descriptor buffers for zero-copy access.
 
-### Watermark Handler
+**Skeleton function:** `pfpga_mmap()`
 
-Find `pfpga_irq_watermark()`:
+### Background
 
-```c
-static irqreturn_t pfpga_irq_watermark(int irq, void *data)
-{
-    struct phantomfpga_dev *pfdev = data;
-    u32 irq_status;
-    unsigned long flags;
+When using mmap mode, userspace reads frame data directly from the DMA buffers instead of going through `read()`. It then calls `PHANTOMFPGA_IOCTL_CONSUME_FRAME` to signal that it's done with a frame.
 
-    /* Read and check interrupt status */
-    irq_status = pfpga_read32(pfdev, PHANTOMFPGA_REG_IRQ_STATUS);
+### Things to think about
 
-    if (!(irq_status & PHANTOMFPGA_IRQ_WATERMARK))
-        return IRQ_NONE;  /* Not our interrupt */
+- Each descriptor buffer was allocated with `dma_alloc_coherent()`, which returns page-aligned memory. You can map them into userspace with `remap_pfn_range()` or `dma_mmap_coherent()`.
+- Since you have per-descriptor buffers (not one big contiguous allocation), mapping all of them into a single VMA requires a loop. Think about the stride between buffers in the virtual address space.
+- Use `pgprot_noncached()` for the page protection -- CPU must see DMA writes immediately.
+- Set `VM_IO | VM_DONTEXPAND | VM_DONTDUMP` flags on the VMA.
+- Validate the request: is the device configured? Is the size reasonable? Is the offset zero?
 
-    /* Clear the interrupt (write-1-to-clear) */
-    pfpga_write32(pfdev, PHANTOMFPGA_REG_IRQ_STATUS, PHANTOMFPGA_IRQ_WATERMARK);
+### Verify before moving on
 
-    /* Update state under lock */
-    spin_lock_irqsave(&pfdev->lock, flags);
-    pfdev->prod_idx = pfpga_read32(pfdev, PHANTOMFPGA_REG_PROD_IDX);
-    pfdev->irq_count++;
-    spin_unlock_irqrestore(&pfdev->lock, flags);
-
-    /* Wake up poll/read waiters */
-    wake_up_interruptible(&pfdev->wait_queue);
-
-    return IRQ_HANDLED;
-}
-```
-
-### Overrun Handler
-
-Find `pfpga_irq_overrun()`:
-
-```c
-static irqreturn_t pfpga_irq_overrun(int irq, void *data)
-{
-    struct phantomfpga_dev *pfdev = data;
-    u32 irq_status;
-    unsigned long flags;
-
-    irq_status = pfpga_read32(pfdev, PHANTOMFPGA_REG_IRQ_STATUS);
-
-    if (!(irq_status & PHANTOMFPGA_IRQ_OVERRUN))
-        return IRQ_NONE;
-
-    /* Clear the interrupt */
-    pfpga_write32(pfdev, PHANTOMFPGA_REG_IRQ_STATUS, PHANTOMFPGA_IRQ_OVERRUN);
-
-    /* Log warning - this means userspace is too slow! */
-    dev_warn_ratelimited(&pfdev->pdev->dev, "ring buffer overrun!\n");
-
-    spin_lock_irqsave(&pfdev->lock, flags);
-    pfdev->irq_count++;
-    spin_unlock_irqrestore(&pfdev->lock, flags);
-
-    /* Still wake waiters - they should check for overrun */
-    wake_up_interruptible(&pfdev->wait_queue);
-
-    return IRQ_HANDLED;
-}
-```
-
-### Key Points
-
-- Check IRQ_STATUS to confirm it's your interrupt
-- Clear the interrupt before doing work (W1C semantics)
-- Use spinlock to protect shared state
-- `IRQ_NONE` if not your interrupt, `IRQ_HANDLED` otherwise
-- `dev_warn_ratelimited` prevents log spam
+mmap is tricky -- if it works, great. If it doesn't, you might get a SIGBUS or silent data corruption. Test with the viewer or a small program that mmaps, reads a frame, and prints it. Compare the output with what `read()` gives you -- they should be identical.
 
 ---
 
-## Part 8: Read Operation
+## Part 8: IOCTL implementation
 
-**Goal:** Implement frame reading for userspace.
+**Goal:** Wire up the control interface.
 
-### Implementation
+**Skeleton function:** `pfpga_ioctl()` -- the switch/case structure is already there.
 
-Find `pfpga_read()`:
+### Background
 
-```c
-static ssize_t pfpga_read(struct file *file, char __user *buf,
-                          size_t count, loff_t *ppos)
-{
-    struct phantomfpga_dev *pfdev = file->private_data;
-    unsigned long flags;
-    u32 prod_idx, cons_idx, pending;
-    size_t frame_offset, to_copy;
-    void *frame_ptr;
-    int ret;
+The ioctl interface is how userspace configures and controls the device. The switch structure and most of the boilerplate are already in the skeleton. The main one to implement is SET_CFG -- the rest are either done (GET_CFG, GET_STATS, RESET_STATS, GET_BUFFER_INFO) or straightforward (START/STOP call existing functions, SET_FAULT writes two registers).
 
-    /* Must be streaming */
-    if (!pfdev->streaming)
-        return -EINVAL;
+### SET_CFG -- the meaty one
 
-    /* Wait for data if blocking */
-    if (!(file->f_flags & O_NONBLOCK)) {
-        ret = wait_event_interruptible(pfdev->wait_queue,
-            !phantomfpga_ring_empty(pfdev->prod_idx, pfdev->cons_idx) ||
-            !pfdev->streaming);
+This is where everything comes together. You need to:
 
-        if (ret)
-            return ret;  /* Interrupted by signal */
+1. Validate the request (not streaming, parameters in range, desc_count is power of 2)
+2. Allocate/reallocate the descriptor ring and buffers
+3. Apply configuration to device registers
+4. Program the descriptor ring address
+5. Initialize and submit descriptors
+6. Mark the device as configured
 
-        if (!pfdev->streaming)
-            return 0;  /* EOF - device stopped */
-    }
-
-    /* Check for available frames */
-    spin_lock_irqsave(&pfdev->lock, flags);
-    prod_idx = pfdev->prod_idx;
-    cons_idx = pfdev->cons_idx;
-    spin_unlock_irqrestore(&pfdev->lock, flags);
-
-    pending = phantomfpga_ring_pending(prod_idx, cons_idx, pfdev->ring_size);
-    if (pending == 0)
-        return -EAGAIN;  /* No data available */
-
-    /* Calculate frame address */
-    frame_offset = phantomfpga_frame_offset(cons_idx, pfdev->frame_size);
-    frame_ptr = pfdev->dma_buf + frame_offset;
-
-    /* Copy one frame to userspace */
-    to_copy = min(count, (size_t)pfdev->frame_size);
-    if (copy_to_user(buf, frame_ptr, to_copy))
-        return -EFAULT;
-
-    /* Advance consumer index */
-    spin_lock_irqsave(&pfdev->lock, flags);
-    pfdev->cons_idx = (cons_idx + 1) & (pfdev->ring_size - 1);
-    pfpga_write32(pfdev, PHANTOMFPGA_REG_CONS_IDX, pfdev->cons_idx);
-    pfdev->frames_consumed++;
-    spin_unlock_irqrestore(&pfdev->lock, flags);
-
-    return to_copy;
-}
-```
-
-### Key Points
-
-- Handle both blocking and non-blocking modes
-- `wait_event_interruptible` sleeps until condition is true
-- Return -EAGAIN for non-blocking when no data
-- `copy_to_user` handles user/kernel memory boundary
-- Advance consumer index after successful read
-
----
-
-## Part 9: Poll Operation
-
-**Goal:** Support select()/poll()/epoll() for async I/O.
-
-### Implementation
-
-Find `pfpga_poll()`:
-
-```c
-static __poll_t pfpga_poll(struct file *file, poll_table *wait)
-{
-    struct phantomfpga_dev *pfdev = file->private_data;
-    __poll_t mask = 0;
-    unsigned long flags;
-    u32 prod_idx, cons_idx;
-
-    /* Register with poll subsystem */
-    poll_wait(file, &pfdev->wait_queue, wait);
-
-    /* Check current state */
-    spin_lock_irqsave(&pfdev->lock, flags);
-    prod_idx = pfdev->prod_idx;
-    cons_idx = pfdev->cons_idx;
-    spin_unlock_irqrestore(&pfdev->lock, flags);
-
-    /* Data available? */
-    if (!phantomfpga_ring_empty(prod_idx, cons_idx))
-        mask |= EPOLLIN | EPOLLRDNORM;
-
-    /* Error or stopped? */
-    if (!pfdev->streaming)
-        mask |= EPOLLHUP;
-
-    return mask;
-}
-```
-
-### Key Points
-
-- `poll_wait` registers the wait queue - doesn't block!
-- Return current state immediately
-- EPOLLIN = readable, EPOLLHUP = hung up
-
----
-
-## Part 10: Memory Mapping
-
-**Goal:** Allow userspace to mmap the DMA buffer for zero-copy access.
-
-### Implementation
-
-Find `pfpga_mmap()`:
-
-```c
-static int pfpga_mmap(struct file *file, struct vm_area_struct *vma)
-{
-    struct phantomfpga_dev *pfdev = file->private_data;
-    size_t size = vma->vm_end - vma->vm_start;
-    int ret;
-
-    /* Must be configured */
-    if (!pfdev->configured) {
-        dev_err(&pfdev->pdev->dev, "mmap: device not configured\n");
-        return -EINVAL;
-    }
-
-    /* Validate size */
-    if (size > pfdev->dma_size) {
-        dev_err(&pfdev->pdev->dev, "mmap: size %zu > buffer %zu\n",
-                size, pfdev->dma_size);
-        return -EINVAL;
-    }
-
-    /* Only offset 0 is supported */
-    if (vma->vm_pgoff != 0) {
-        dev_err(&pfdev->pdev->dev, "mmap: non-zero offset not supported\n");
-        return -EINVAL;
-    }
-
-    /* Set memory type for DMA buffer */
-    vma->vm_page_prot = pgprot_noncached(vma->vm_page_prot);
-
-    /* Map the DMA buffer */
-    ret = dma_mmap_coherent(&pfdev->pdev->dev, vma,
-                            pfdev->dma_buf, pfdev->dma_handle,
-                            pfdev->dma_size);
-    if (ret) {
-        dev_err(&pfdev->pdev->dev, "dma_mmap_coherent failed: %d\n", ret);
-        return ret;
-    }
-
-    /* Set flags */
-    vm_flags_set(vma, VM_IO | VM_DONTEXPAND | VM_DONTDUMP);
-
-    dev_dbg(&pfdev->pdev->dev, "mmap: %zu bytes mapped\n", size);
-    return 0;
-}
-```
-
-### Key Points
-
-- Validate before mapping (configured, size, offset)
-- `pgprot_noncached` ensures CPU sees DMA writes immediately
-- `dma_mmap_coherent` is the right way to map DMA buffers
-- VM_IO marks as I/O memory, VM_DONTDUMP excludes from core dumps
-
-### A Note on Buffer Layout
-
-The example above maps a single contiguous DMA buffer with `dma_mmap_coherent`. Your actual skeleton uses per-descriptor DMA buffers (one `dma_alloc_coherent` per descriptor), so you'll need `remap_pfn_range` in a loop instead.
-
-When mapping multiple buffers into a single VMA, remember that the MMU works in pages. `dma_alloc_coherent` always returns page-aligned memory, and `remap_pfn_range` expects page-aligned addresses and sizes. If your buffer size isn't a natural multiple of `PAGE_SIZE`, think about what that means for the stride between consecutive buffers in the mapping.
-
----
-
-## Part 11: IOCTL Implementation
-
-**Goal:** Implement the control interface.
-
-The skeleton already has the switch structure. Complete each case:
-
-### SET_CFG
-
-```c
-case PHANTOMFPGA_IOCTL_SET_CFG:
-{
-    struct phantomfpga_config cfg;
-    size_t required_size;
-
-    /* Cannot configure while streaming */
-    if (pfdev->streaming) {
-        ret = -EBUSY;
-        break;
-    }
-
-    /* Copy from userspace */
-    if (copy_from_user(&cfg, argp, sizeof(cfg))) {
-        ret = -EFAULT;
-        break;
-    }
-
-    /* Validate parameters */
-    if (cfg.frame_size < PHANTOMFPGA_MIN_FRAME_SIZE ||
-        cfg.frame_size > PHANTOMFPGA_MAX_FRAME_SIZE) {
-        ret = -EINVAL;
-        break;
-    }
-    if (cfg.frame_rate < PHANTOMFPGA_MIN_FRAME_RATE ||
-        cfg.frame_rate > PHANTOMFPGA_MAX_FRAME_RATE) {
-        ret = -EINVAL;
-        break;
-    }
-    if (cfg.ring_size < PHANTOMFPGA_MIN_RING_SIZE ||
-        cfg.ring_size > PHANTOMFPGA_MAX_RING_SIZE) {
-        ret = -EINVAL;
-        break;
-    }
-    /* Ring size must be power of 2 */
-    if (cfg.ring_size & (cfg.ring_size - 1)) {
-        ret = -EINVAL;
-        break;
-    }
-    if (cfg.watermark == 0 || cfg.watermark >= cfg.ring_size) {
-        ret = -EINVAL;
-        break;
-    }
-
-    /* Calculate required buffer size */
-    required_size = (size_t)cfg.frame_size * cfg.ring_size;
-
-    /* Reallocate DMA buffer if needed */
-    if (required_size != pfdev->dma_size) {
-        ret = pfpga_alloc_dma_buffer(pfdev, required_size);
-        if (ret)
-            break;
-    }
-
-    /* Store configuration */
-    pfdev->frame_size = cfg.frame_size;
-    pfdev->frame_rate = cfg.frame_rate;
-    pfdev->ring_size = cfg.ring_size;
-    pfdev->watermark = cfg.watermark;
-
-    /* Apply to device */
-    pfpga_apply_config(pfdev);
-    pfpga_configure_dma(pfdev);
-
-    pfdev->configured = true;
-    ret = 0;
-}
-break;
-```
-
-### START and STOP
-
-```c
-case PHANTOMFPGA_IOCTL_START:
-    ret = pfpga_start_streaming(pfdev);
-    break;
-
-case PHANTOMFPGA_IOCTL_STOP:
-    ret = pfpga_stop_streaming(pfdev);
-    break;
-```
-
-### GET_STATS
-
-```c
-case PHANTOMFPGA_IOCTL_GET_STATS:
-{
-    struct phantomfpga_stats stats = {0};
-    unsigned long flags;
-
-    /* Read device counters */
-    stats.frames_produced = pfpga_read32(pfdev, PHANTOMFPGA_REG_STAT_FRAMES);
-    stats.errors = pfpga_read32(pfdev, PHANTOMFPGA_REG_STAT_ERRORS);
-    stats.overruns = pfpga_read32(pfdev, PHANTOMFPGA_REG_STAT_OVERRUNS);
-    stats.prod_idx = pfpga_read32(pfdev, PHANTOMFPGA_REG_PROD_IDX);
-    stats.cons_idx = pfpga_read32(pfdev, PHANTOMFPGA_REG_CONS_IDX);
-    stats.status = pfpga_read32(pfdev, PHANTOMFPGA_REG_STATUS);
-
-    /* Add driver-side stats */
-    spin_lock_irqsave(&pfdev->lock, flags);
-    stats.frames_consumed = pfdev->frames_consumed;
-    stats.irq_count = pfdev->irq_count;
-    spin_unlock_irqrestore(&pfdev->lock, flags);
-
-    if (copy_to_user(argp, &stats, sizeof(stats)))
-        ret = -EFAULT;
-}
-break;
-```
+The validation ranges are defined as constants in the register header (`MIN_FRAME_RATE`, `MAX_FRAME_RATE`, etc.).
 
 ### CONSUME_FRAME
 
-```c
-case PHANTOMFPGA_IOCTL_CONSUME_FRAME:
-{
-    unsigned long flags;
+Used in mmap mode: advance the consumer index, reset the descriptor, resubmit. Similar to what read() does after copying data, but without the copy.
 
-    spin_lock_irqsave(&pfdev->lock, flags);
+### SET_FAULT
 
-    /* Check if frames available */
-    if (phantomfpga_ring_empty(pfdev->prod_idx, pfdev->cons_idx)) {
-        spin_unlock_irqrestore(&pfdev->lock, flags);
-        ret = -EAGAIN;
-        break;
-    }
-
-    /* Advance consumer index */
-    pfdev->cons_idx = (pfdev->cons_idx + 1) & (pfdev->ring_size - 1);
-    pfpga_write32(pfdev, PHANTOMFPGA_REG_CONS_IDX, pfdev->cons_idx);
-    pfdev->frames_consumed++;
-
-    spin_unlock_irqrestore(&pfdev->lock, flags);
-    ret = 0;
-}
-break;
-```
+Write the fault flags and rate to the two fault registers. Straightforward -- but think about whether you want to allow this while streaming.
 
 ---
 
-## Common Pitfalls
+## Common pitfalls
 
-### 1. Forgetting Locking
+### 1. Forgetting locking
 
-**Wrong:**
-```c
-pfdev->cons_idx++;  /* Unsafe! IRQ can run here */
-pfpga_write32(pfdev, REG_CONS_IDX, pfdev->cons_idx);
-```
+The IRQ handler updates `shadow_tail` while process context reads it. Without a spinlock, you get torn reads on 32-bit platforms or stale values from CPU caches.
 
-**Right:**
-```c
-spin_lock_irqsave(&pfdev->lock, flags);
-pfdev->cons_idx++;
-pfpga_write32(pfdev, REG_CONS_IDX, pfdev->cons_idx);
-spin_unlock_irqrestore(&pfdev->lock, flags);
-```
+Rule of thumb: any field touched by both IRQ and process context needs `spin_lock_irqsave()` in process context and `spin_lock()` in IRQ context.
 
-### 2. Holding Spinlock Too Long
+### 2. Holding spinlock too long
 
-**Wrong:**
-```c
-spin_lock(&pfdev->lock);
-copy_to_user(buf, data, len);  /* Can sleep! */
-spin_unlock(&pfdev->lock);
-```
+`copy_to_user()` can sleep (page fault). Sleeping with a spinlock held = deadlock. Copy what you need into a local variable under the lock, release, then copy to user.
 
-**Right:**
-```c
-spin_lock_irqsave(&pfdev->lock, flags);
-memcpy(local_buf, data, len);  /* Copy to local buffer */
-spin_unlock_irqrestore(&pfdev->lock, flags);
-copy_to_user(buf, local_buf, len);  /* Now safe to sleep */
-```
+### 3. Not checking return values
 
-### 3. Not Checking Return Values
+`dma_alloc_coherent()` returns NULL on failure. `copy_from_user()` returns the number of bytes NOT copied (zero = success). `request_irq()` returns negative errno. Check everything.
 
-**Wrong:**
-```c
-dma_alloc_coherent(...);  /* Might return NULL! */
-pfdev->dma_buf[0] = 42;   /* Oops, NULL dereference */
-```
-
-**Right:**
-```c
-pfdev->dma_buf = dma_alloc_coherent(...);
-if (!pfdev->dma_buf)
-    return -ENOMEM;
-```
-
-### 4. Wrong Barrier Usage
+### 4. Wrong barrier usage
 
 Memory barriers enforce ordering of memory operations. You usually don't need them between `ioread/iowrite` calls (those have implicit barriers), but you DO need one when mixing regular memory writes with MMIO register writes.
 
-The classic case in DMA drivers: you write descriptor fields into coherent memory, then update a device register to tell the hardware about them. Without a barrier, the CPU might reorder those writes, and the device would see the updated register before the descriptor data is actually in memory.
+The classic case: you write descriptor fields into coherent memory, then update a device register to tell the hardware about them. Without a barrier, the CPU might reorder those writes, and the device would see the updated register before the descriptor data is actually in memory.
 
 ```c
 /* Without wmb(): device might see new head before descriptor data */
-pfdev->desc_ring[i].addr = buffer_dma;  /* regular memory write */
-pfdev->desc_ring[i].len = size;         /* regular memory write */
+pfdev->desc_ring[i].dst_addr = buffer_dma;  /* regular memory write */
+pfdev->desc_ring[i].length = size;          /* regular memory write */
 wmb();  /* Ensure descriptor fields hit memory before head update */
-pfpga_write32(pfdev, REG_HEAD, new_head);  /* MMIO write to device */
+pfpga_write32(pfdev, REG_DESC_HEAD, new_head);  /* MMIO write */
 ```
 
-If you're only doing register-to-register writes, `iowrite32` handles ordering for you -- no explicit barrier needed:
-
-```c
-/* These are fine without wmb() -- iowrite32 orders them */
-pfpga_write32(pfdev, REG_SIZE, size);
-pfpga_write32(pfdev, REG_ADDR, addr);
-```
+If you're only doing register-to-register writes, `iowrite32` handles ordering for you -- no explicit barrier needed.
 
 See the Glossary entry for Memory Barrier for more context.
 
-### 5. Interrupt Handler Doing Too Much
+### 5. Interrupt handler doing too much
 
-Keep IRQ handlers minimal - just acknowledge the interrupt and wake waiters. Heavy processing should be in tasklets, workqueues, or userspace.
+Keep IRQ handlers minimal - just acknowledge the interrupt, update `shadow_tail`, and wake waiters. Heavy processing (CRC checks, copy_to_user, etc.) belongs in process context.
 
 ---
 
-## Debugging Tips
+## Debugging tips
 
 ### Using dmesg
 
@@ -917,7 +376,11 @@ dmesg -w                        # Watch messages in real-time
 dmesg | grep phantomfpga        # Filter for our driver
 ```
 
-### Adding Debug Prints
+### Kernel prints -- your best debugging tool
+
+Seriously. GDB and fancy tracers have their place, but for kernel driver development, `dev_info()` and friends will get you through 90% of your bugs. Don't be shy about adding them -- you can always remove them later.
+
+**The `dev_*` family** -- always prefer these over raw `printk` or `pr_*`. They automatically prefix messages with the device name, so you know which device is talking:
 
 ```c
 dev_dbg(&pfdev->pdev->dev, "starting streaming\n");    /* Debug level */
@@ -926,13 +389,54 @@ dev_warn(&pfdev->pdev->dev, "buffer nearly full\n");   /* Warning */
 dev_err(&pfdev->pdev->dev, "DMA failed\n");            /* Error */
 ```
 
-Enable debug messages:
-```bash
-echo 8 > /proc/sys/kernel/printk  # Show all messages
-# Or: add 'dyndbg="module phantomfpga +p"' to kernel command line
+**Print early, print often.** When implementing a new function, start by adding a print at the entry point. This alone tells you whether your code path is even being reached:
+
+```c
+static int pfpga_start_streaming(struct phantomfpga_dev *pfdev)
+{
+    dev_info(&pfdev->pdev->dev, "start_streaming called\n");
+    /* ... */
+}
 ```
 
-### Checking Device State
+**Print register values.** When writing to hardware registers, print what you're writing. When reading status, print what you got. This is the fastest way to find "I thought I wrote X but the device sees Y" bugs:
+
+```c
+dev_info(&pfdev->pdev->dev, "ring addr lo=0x%08x hi=0x%08x size=%u\n",
+         lower_32_bits(ring_dma), upper_32_bits(ring_dma), desc_count);
+```
+
+**Print indices.** For ring buffer debugging, dump the index state. Most ring bugs show up as indices that don't move or that overtake each other:
+
+```c
+dev_dbg(&pfdev->pdev->dev,
+        "head=%u tail=%u shadow=%u consumer=%u\n",
+        pfdev->desc_head, pfdev->desc_tail,
+        pfdev->shadow_tail, pfdev->consumer);
+```
+
+**Rate-limited prints** for hot paths. In the IRQ handler or read path, a print per invocation will flood your log and slow everything to a crawl. Use `dev_dbg` (which is compiled out unless you enable it) or `dev_info_ratelimited()`:
+
+```c
+/* In the IRQ handler -- fires often, don't spam */
+dev_dbg(&pfdev->pdev->dev, "complete IRQ, shadow_tail now %u\n",
+        pfdev->shadow_tail);
+```
+
+**Enable debug messages at runtime:**
+```bash
+echo 8 > /proc/sys/kernel/printk           # Show all levels in console
+echo "module phantomfpga +p" > /sys/kernel/debug/dynamic_debug/control
+```
+
+Or at boot via kernel command line:
+```
+dyndbg="module phantomfpga +p"
+```
+
+**When to remove them:** Once a function works reliably, downgrade `dev_info` to `dev_dbg` rather than deleting them. That way they're still there if you need them, but silent by default. Keep `dev_err` and `dev_warn` in error paths permanently -- those are part of proper driver behavior, not just debugging aids.
+
+### Checking device state
 
 ```bash
 # View PCI device
@@ -943,6 +447,12 @@ cat /proc/iomem | grep phantomfpga
 
 # View interrupts
 cat /proc/interrupts | grep phantomfpga
+
+# Read registers directly (useful before driver is working)
+BAR0=$(lspci -v -s 00:01.0 | grep "Memory at" | awk '{print $3}')
+devmem $((0x${BAR0} + 0x000))   # DEV_ID -- should be 0xF00DFACE
+devmem $((0x${BAR0} + 0x00C))   # STATUS
+devmem $((0x${BAR0} + 0x040))   # STAT_FRAMES_TX
 ```
 
 ### Using GDB
@@ -958,9 +468,9 @@ gdb vmlinux
 
 ---
 
-## Testing Your Implementation
+## Testing your implementation
 
-### Basic Functionality
+### Basic functionality
 
 ```bash
 # Load driver
@@ -970,40 +480,55 @@ dmesg | tail
 # Verify device node
 ls -la /dev/phantomfpga0
 
-# Build and run test app
-cd /mnt/app/build && cmake .. && make
-./phantomfpga_app --rate 1000 --size 256 --watermark 16
+# Build and run app
+cd /mnt/app
+make
+./phantomfpga_app
 ```
 
-### Stress Testing
-
-```bash
-# High rate
-./phantomfpga_app --rate 10000 --size 64 --watermark 8
-
-# Large frames
-./phantomfpga_app --rate 100 --size 65536 --watermark 4
-
-# Watch for overruns
-dmesg | grep overrun
-```
-
-### Integration Tests
+### Integration tests
 
 ```bash
 cd /mnt/tests/integration
 ./run_all.sh
 ```
 
+### Fault injection
+
+Once streaming works, test your error handling:
+```bash
+# In the guest, via the app's SET_FAULT ioctl, or directly:
+devmem $((0x${BAR0} + 0x58)) w 0x02   # CORRUPT_CRC
+devmem $((0x${BAR0} + 0x5C)) w 10     # Every ~10 frames
+
+# Your driver/app should detect bad CRCs and report them
+```
+
 ---
 
-## Next Steps
+## Suggested implementation order
+
+The parts above are numbered for reading order, but here's a practical build order -- each step gives you something testable. Do NOT skip ahead. Each step builds on the previous one, and each has a clear "it works" signal. If a step doesn't work, fix it before moving on. Debugging step 8 when step 3 is broken is not a good time.
+
+1. **Soft reset** (Part 3) -- simple, and probe already calls it
+2. **Descriptor allocation** (Part 1) -- verify with dmesg, check for leaks on rmmod
+3. **Descriptor ring setup** (Part 2) -- program registers, verify with devmem
+4. **MSI-X setup** (Part 4) -- check `/proc/interrupts`
+5. **Interrupt handlers** (Part 5) -- start simple, just clear and log
+6. **Configuration + start/stop** (Part 3) -- now you can start the device
+7. **Poll** (Part 6) -- get async notification working
+8. **Read** (Part 6) -- the moment of truth: data flows to userspace
+9. **Mmap** (Part 7) -- zero-copy path
+10. **IOCTLs** (Part 8) -- SET_CFG, CONSUME_FRAME, SET_FAULT
+
+---
+
+## Next steps
 
 Once your driver is working:
 
 1. **Implement the userspace app** - Complete the TODOs in `app/phantomfpga_app_impl.cpp`
-2. **Add error handling** - Test with fault injection
-3. **Optimize performance** - Profile with `perf`
-4. **Add sysfs interface** - Expose configuration via /sys
+2. **Run the viewer** - Complete `viewer/phantomfpga_view_impl.cpp` and see what the device has been hiding
+3. **Test with fault injection** - Break things on purpose and watch your error handling cope (or not)
 
-Good luck, and may your buffers never overflow!
+Good luck, and may your descriptors never run empty!

@@ -44,7 +44,7 @@ And when you're done? Well. Let's just say the device is trying to tell you some
 +----------------------------------------+
 ```
 
-## What Is This Thing?
+## What is this thing?
 
 You know how learning to drive is easier in a simulator before you crash a real car? Same idea here, but for kernel drivers.
 
@@ -75,7 +75,7 @@ The device has 250 frames of data. Each frame is exactly 5120 bytes. They loop f
 - Works on x86_64 and aarch64 (ARM64)
 - Driver and apps with extensive TODO comments guiding you step by step
 
-## Quick Start
+## Quick start
 
 Let's get you up and running. This will take about 30-60 minutes depending on your internet speed and how many times you need to re-read the instructions (no judgment, we've all been there).
 
@@ -218,7 +218,7 @@ ssh root@localhost -p 2222 'chmod 700 ~/.ssh && chmod 600 ~/.ssh/authorized_keys
 ssh -i ~/.ssh/id_rsa_dropbear root@localhost -p 2222
 ```
 
-### Step 5: Verify the Device is There
+### Step 5: Verify the device is there
 
 Inside the VM, run:
 
@@ -258,7 +258,7 @@ devmem 0x10040000 w
 
 `0xF00DFACE` - that's the device's way of saying hello. If you see this, your fake FPGA is alive and... holding its secrets until you write a proper driver for it.
 
-## Now What? The Fun Part!
+## Now what? The fun part!
 
 You've got the environment running. Now comes the actual learning:
 
@@ -280,14 +280,14 @@ You've got the environment running. Now comes the actual learning:
      `python3 tools/validate_stream.py stream.bin -v`
    - If you did everything right, you'll know
 
-## C++ Crash Course (just enough to survive)
+## C++ crash course (just enough to survive)
 
 The app and viewer are written in C++17. If you're coming from C (or if your C++
 knowledge stopped at `cout << "hello"` in college), here's what you actually need
 to know. This isn't a C++ textbook -- just the concepts you'll use in the TODO
 methods.
 
-### Classes and Inheritance
+### Classes and inheritance
 
 The codebase uses a base class + derived class pattern. The base class (provided)
 defines pure virtual methods. You implement them in the derived class (your file).
@@ -308,7 +308,7 @@ You access base class members with the usual dot syntax: `config_.frame_rate`,
 `stats_.frames_received`, `dev_fd_.get()`. They're `protected`, which means
 your derived class can use them but nobody else can.
 
-### RAII (Resource Acquisition Is Initialization)
+### RAII (resource acquisition is initialization)
 
 The single most important C++ concept you'll use. RAII means: when you create an
 object, it acquires a resource. When the object goes out of scope, it releases it.
@@ -330,7 +330,7 @@ The codebase has two RAII wrappers:
 - **`FileDescriptor`** -- wraps a file descriptor, calls `close()` on destruction
 - **`MappedMemory`** -- wraps an `mmap()` region, calls `munmap()` on destruction
 
-### Move Semantics
+### Move semantics
 
 RAII wrappers are *move-only*. You can't copy a file descriptor (that would mean
 two owners trying to close the same fd). You transfer ownership instead:
@@ -348,7 +348,7 @@ The `=` here triggers a *move assignment* -- ownership transfers from the
 temporary object on the right to the member on the left. The old value (if any)
 gets cleaned up automatically.
 
-### Smart Pointers (std::unique_ptr)
+### Smart pointers (std::unique_ptr)
 
 `std::unique_ptr` is RAII for heap-allocated objects. It owns the pointer and
 deletes it when it goes out of scope. You'll see it for the TCP server:
@@ -394,7 +394,7 @@ if (hdr->magic == frame::MAGIC) { ... }
 `constexpr` means "evaluate at compile time" -- like `#define` but type-safe
 and debugger-friendly.
 
-### Static Methods
+### Static methods
 
 `CRC32::compute()` is a static method -- you call it on the class, not on an
 instance. Think of it as a namespaced function:
@@ -415,7 +415,7 @@ int fd = ::open(DEVICE_PATH, O_RDWR);  // :: = global scope
 The `::` isn't always required, but it makes it clear you're calling the C
 library function, not some method on the current class.
 
-### Pointer Casting
+### Pointer casting
 
 To interpret raw bytes as a struct (like reading a frame header):
 
@@ -428,7 +428,7 @@ auto* hdr = (const FrameHeader*)frame_buffer_.data();
 Both work. The C++ cast is more explicit about what it's doing. Use whichever
 doesn't make your eyes bleed.
 
-### Zero-Initialization
+### Zero-initialization
 
 C++ structs can be zero-initialized with `= {}`:
 
@@ -460,7 +460,7 @@ This is a good time to read the docs before you begin breaking stuff. Start here
 3. **[Driver Implementation Guide](docs/driver-guide.md)** - Step-by-step instructions for completing the driver
 4. **[Glossary](docs/glossary.md)** - Quick reference for PCIe, DMA, MSI-X, and other jargon
 
-### Building the Driver
+### Building the driver
 
 Build on your host machine, test inside the VM. The `driver/` and `app/` directories on your host are automatically shared with the VM, so anything you build shows up inside the VM instantly. You can treat the `/mnt/driver` and `/mnt/app` directories **in the VM** as a window into your host - everything you in those on any side will be reflected on the other in real time.
 
@@ -479,7 +479,7 @@ dmesg | tail -20
 
 You should see messages about the driver loading and finding the device.
 
-### Building the Apps
+### Building the apps
 
 ```bash
 # On your host:
@@ -507,7 +507,7 @@ And then... well. You'll see what you'll see. Or you won't, if something's broke
 > [!NOTE]
 > Make sure your terminal is at least 110 columns wide and 45 rows tall. Just trust me on this one.
 
-## Building for a Different Architecture
+## Building for a different architecture
 
 The Makefile auto-detects your architecture, but you can explicitly build for a specific one:
 
@@ -524,7 +524,7 @@ cd ../..
 
 Same device, same driver code, different architecture. That's the beauty of proper abstractions.
 
-## VM Options
+## VM options
 
 ```bash
 # See kernel boot messages (hidden by default)
