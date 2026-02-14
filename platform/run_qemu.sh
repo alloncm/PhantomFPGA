@@ -53,6 +53,7 @@ esac
 QEMU_BUILD="${PROJECT_ROOT}/platform/qemu/build"
 DRIVER_DIR="${PROJECT_ROOT}/driver"
 APP_DIR="${PROJECT_ROOT}/app"
+SHARE_DIR="${PROJECT_ROOT}/share"
 
 # These get set based on architecture (see setup_arch_paths)
 QEMU_BIN=""
@@ -116,9 +117,13 @@ NETWORK:
   Example: nc -l 5000 on host, nc 10.0.2.2 5000 from guest
 
 SHARED DIRECTORIES:
-  The driver/ and app/ directories are mounted in the guest via 9p virtfs:
+  The driver/, app/, and share/ directories are mounted in the guest via 9p virtfs:
     mount -t 9p -o trans=virtio driver /mnt/driver
     mount -t 9p -o trans=virtio app /mnt/app
+    mount -t 9p -o trans=virtio share /mnt/share
+
+  share/ is a general-purpose shared directory for exchanging files between
+  host and guest. Put whatever you want there.
 
   (These should be auto-mounted at boot via /etc/fstab in the guest)
 
@@ -237,6 +242,11 @@ check_prerequisites() {
     if [[ ! -d "${APP_DIR}" ]]; then
         warn "App directory not found: ${APP_DIR}"
         warn "  9p mount for app/ will fail in guest"
+    fi
+
+    if [[ ! -d "${SHARE_DIR}" ]]; then
+        warn "Share directory not found: ${SHARE_DIR}"
+        warn "  9p mount for share/ will fail in guest"
     fi
 
     # Check KVM availability
@@ -496,6 +506,9 @@ build_qemu_cmd() {
     fi
     if [[ -d "${APP_DIR}" ]]; then
         cmd+=(-virtfs "local,path=${APP_DIR},mount_tag=app,security_model=mapped-xattr")
+    fi
+    if [[ -d "${SHARE_DIR}" ]]; then
+        cmd+=(-virtfs "local,path=${SHARE_DIR},mount_tag=share,security_model=mapped-xattr")
     fi
 
     # -------------------------------------------------------------------------

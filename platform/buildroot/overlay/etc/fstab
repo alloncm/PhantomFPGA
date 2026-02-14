@@ -21,6 +21,8 @@ debugfs         /sys/kernel/debug  debugfs  defaults  0  0
 # Mount tags are defined in run_qemu.sh:
 #   -virtfs local,path=driver,mount_tag=driver,security_model=mapped-xattr
 #   -virtfs local,path=app,mount_tag=app,security_model=mapped-xattr
+#   -virtfs local,path=share,mount_tag=share,security_model=mapped-xattr
 #
 driver          /mnt/driver    9p      trans=virtio,version=9p2000.L,msize=104857600,nofail  0  0
 app             /mnt/app       9p      trans=virtio,version=9p2000.L,msize=104857600,nofail  0  0
+share           /mnt/share     9p      trans=virtio,version=9p2000.L,msize=104857600,nofail  0  0

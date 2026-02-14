@@ -6,6 +6,7 @@
 # 9p shared directories (mounted from host)
 export PHANTOMFPGA_DRIVER_DIR="/mnt/driver"
 export PHANTOMFPGA_APP_DIR="/mnt/app"
+export PHANTOMFPGA_SHARE_DIR="/mnt/share"
 
 # Add app directory to PATH if it exists
 if [ -d "$PHANTOMFPGA_APP_DIR" ]; then
