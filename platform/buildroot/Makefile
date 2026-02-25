@@ -188,6 +188,20 @@ else
   QUIET := --quiet
 endif
 
+# -----------------------------------------------------------------------------
+# PATH SANITIZATION
+# -----------------------------------------------------------------------------
+# Buildroot refuses to build if PATH contains spaces, tabs, or newlines.
+# On WSL, Windows paths like /mnt/c/Program Files/... leak into Linux PATH
+# and trigger this check. We strip those entries automatically so "make"
+# just works without manual PATH surgery.
+
+_CLEAN_PATH := $(shell echo "$$PATH" | tr ':' '\n' | grep -v '[[:space:]]' | paste -sd ':')
+ifneq ($(PATH),$(_CLEAN_PATH))
+$(info NOTE: stripped PATH entries containing whitespace (Buildroot needs a clean PATH))
+export PATH := $(_CLEAN_PATH)
+endif
+
 # =============================================================================
 # BUILD TARGETS
 # =============================================================================

@@ -602,6 +602,10 @@ Also verify you have network connectivity - buildroot needs to download packages
 wget -q --spider https://buildroot.org && echo "OK" || echo "Network issue"
 ```
 
+### "PATH contains spaces" (WSL)
+
+This is handled automatically -- the Buildroot Makefile strips Windows PATH entries before building. If you still see this error, make sure you have the latest version of this repository (`git pull`).
+
 ### "Device not showing up in lspci"
 
 Make sure you're using OUR QEMU, not the system QEMU. The difference is subtle but crucial:
