@@ -985,75 +985,65 @@ static void pfpga_teardown_msix(struct phantomfpga_dev *pfdev)
 }
 
 /*
+ * Free descriptor ring and buffers.
+ */
+static void pfpga_free_descriptors(struct phantomfpga_dev *pfdev)
+{
+	struct device *dev = &pfdev->pdev->dev;
+
+	if (pfdev->buffers != NULL) {
+		for (int i = 0; i < pfdev->desc_count; i++) {
+			struct phantomfpga_buffer *buffer = pfdev->buffers + i;
+			if (buffer->vaddr != NULL) {
+				dma_free_coherent(dev, pfdev->buffer_size, buffer->vaddr, buffer->dma_addr);
+			}
+		}
+
+		kfree(pfdev->buffers);
+		dev_info(dev, "Succesfully freed dma buffers");
+	}
+
+	if (pfdev->desc_ring != NULL) {
+		dma_free_coherent(dev, pfdev->desc_count * sizeof(struct phantomfpga_sg_desc), pfdev->desc_ring, pfdev->desc_ring_dma);
+		dev_info(dev, "Succesfully freed desc ring");
+	}
+}
+
+/*
  * Allocate descriptor ring and per-descriptor buffers.
  */
 static int pfpga_alloc_descriptors(struct phantomfpga_dev *pfdev,
 				   u32 desc_count, size_t buffer_size)
 {
-	/*
-	 * TODO: Allocate SG-DMA resources
-	 *
-	 * Steps:
-	 *   1. Free existing resources if any
-	 *
-	 *   2. Allocate descriptor ring (coherent DMA):
-	 *      size_t ring_size = desc_count * sizeof(struct phantomfpga_sg_desc);
-	 *      pfdev->desc_ring = dma_alloc_coherent(&pfdev->pdev->dev, ring_size,
-	 *                                             &pfdev->desc_ring_dma, GFP_KERNEL);
-	 *      if (!pfdev->desc_ring) return -ENOMEM;
-	 *
-	 *   3. Allocate buffer tracking array:
-	 *      pfdev->buffers = kcalloc(desc_count, sizeof(*pfdev->buffers), GFP_KERNEL);
-	 *      if (!pfdev->buffers) goto err_free_ring;
-	 *
-	 *   4. Allocate per-descriptor buffers (coherent DMA):
-	 *      for (i = 0; i < desc_count; i++) {
-	 *          pfdev->buffers[i].vaddr = dma_alloc_coherent(...);
-	 *          pfdev->buffers[i].dma_addr = dma_handle;
-	 *          pfdev->buffers[i].size = buffer_size;
-	 *          if (!pfdev->buffers[i].vaddr) goto err_free_buffers;
-	 *      }
-	 *
-	 *   5. Store counts:
-	 *      pfdev->desc_count = desc_count;
-	 *      pfdev->buffer_size = buffer_size;
-	 *
-	 *   6. Return 0
-	 */
+	struct device *dev = &pfdev->pdev->dev;
 
-	(void)desc_count;
-	(void)buffer_size;
+	// Allocate the ring itself
+	pfdev->desc_ring = dma_alloc_coherent(dev, sizeof(struct phantomfpga_sg_desc) * desc_count, &pfdev->desc_ring_dma, GFP_KERNEL);
+	if (pfdev->desc_ring == NULL) {
+		goto alloc_err;
+	}
+	pfdev->desc_count = desc_count;
 
-	dev_info(&pfdev->pdev->dev, "descriptor allocation skipped (TODO)\n");
+	// Allocate buffers
+	pfdev->buffers = kzalloc(desc_count * sizeof(struct phantomfpga_buffer), GFP_KERNEL);
+	if (pfdev->buffers == NULL) {
+		goto alloc_err;
+	}
+	pfdev->buffer_size = buffer_size + sizeof(struct phantomfpga_completion);
+	for (int i = 0; i < desc_count; i++) {
+		struct phantomfpga_buffer *buffer = pfdev->buffers + i;
+		buffer->vaddr = dma_alloc_coherent(dev, pfdev->buffer_size, &buffer->dma_addr, GFP_KERNEL);
+		if (buffer->vaddr == NULL) {
+			goto alloc_err;
+		}
+		buffer->size = pfdev->buffer_size;
+	}
+
+	dev_info(dev, "succesfully allocated descriptors\n");
 	return 0;
-}
-
-/*
- * Free descriptor ring and buffers.
- */
-static void pfpga_free_descriptors(struct phantomfpga_dev *pfdev)
-{
-	/*
-	 * TODO: Free SG-DMA resources
-	 *
-	 * Steps:
-	 *   1. Free per-descriptor buffers:
-	 *      for (i = 0; i < desc_count; i++) {
-	 *          if (pfdev->buffers[i].vaddr)
-	 *              dma_free_coherent(...);
-	 *      }
-	 *
-	 *   2. Free buffer tracking array:
-	 *      kfree(pfdev->buffers);
-	 *
-	 *   3. Free descriptor ring:
-	 *      dma_free_coherent(..., pfdev->desc_ring, pfdev->desc_ring_dma);
-	 *
-	 *   4. Clear pointers:
-	 *      pfdev->desc_ring = NULL;
-	 *      pfdev->buffers = NULL;
-	 *      pfdev->desc_count = 0;
-	 */
+alloc_err:
+	pfpga_free_descriptors(pfdev);
+	return -ENOMEM;
 }
 
 /*

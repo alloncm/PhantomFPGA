@@ -41,7 +41,7 @@ else ifeq ($(HOST_ARCH),arm64)
   CROSS_PREFIX := aarch64-buildroot-linux-gnu-
 else
   TARGET_ARCH := x86_64
-  CROSS_PREFIX := x86_64-buildroot-linux-gnu-
+  CROSS_PREFIX := x86_64-linux-
 endif
 
 BR_ARCH_OUTPUT := $(BR_OUTPUT)/$(TARGET_ARCH)
