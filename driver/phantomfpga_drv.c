@@ -209,18 +209,9 @@ static inline bool pfpga_validate_frame_crc(const void *frame)
  */
 static void __maybe_unused pfpga_configure_desc_ring(struct phantomfpga_dev *pfdev)
 {
-	/*
-	 * TODO: Write descriptor ring configuration to device
-	 *
-	 * Steps:
-	 *   1. Split pfdev->desc_ring_dma into low and high 32-bit parts
-	 *   2. Write low 32 bits to PHANTOMFPGA_REG_DESC_RING_LO
-	 *   3. Write high 32 bits to PHANTOMFPGA_REG_DESC_RING_HI
-	 *   4. Write descriptor count to PHANTOMFPGA_REG_DESC_RING_SIZE
-	 *   5. Initialize head/tail to 0
-	 *
-	 * Hint: Use lower_32_bits() and upper_32_bits() macros
-	 */
+	wmb();
+	pfpga_write32(pfdev, PHANTOMFPGA_REG_DESC_RING_LO, lower_32_bits(pfdev->desc_ring_dma));
+	pfpga_write32(pfdev, PHANTOMFPGA_REG_DESC_RING_HI, upper_32_bits(pfdev->desc_ring_dma));
 }
 
 /*
@@ -251,19 +242,11 @@ static void __maybe_unused pfpga_apply_config(struct phantomfpga_dev *pfdev)
  */
 static void __maybe_unused pfpga_submit_descriptors(struct phantomfpga_dev *pfdev, u32 count)
 {
-	/*
-	 * TODO: Submit descriptors to device
-	 *
-	 * Steps:
-	 *   1. Memory barrier to ensure descriptor writes are visible:
-	 *      wmb();
-	 *   2. Update driver's head index:
-	 *      pfdev->desc_head = (pfdev->desc_head + count) & (desc_count - 1);
-	 *   3. Write new head to device:
-	 *      pfpga_write32(pfdev, PHANTOMFPGA_REG_DESC_HEAD, pfdev->desc_head);
-	 *
-	 * The device will start processing descriptors from tail to head.
-	 */
+	// Ensures all the descriptors are up to date
+	wmb();
+
+	pfdev->desc_head = (pfdev->desc_head + count) & (pfdev->desc_count - 1);
+	pfpga_write32(pfdev, PHANTOMFPGA_REG_DESC_HEAD, pfdev->desc_head);
 }
 
 /*
@@ -272,21 +255,21 @@ static void __maybe_unused pfpga_submit_descriptors(struct phantomfpga_dev *pfde
  */
 static void __maybe_unused pfpga_init_descriptors(struct phantomfpga_dev *pfdev)
 {
-	/*
-	 * TODO: Initialize descriptor ring
-	 *
-	 * For each descriptor i in [0, desc_count):
-	 *   1. Clear control flags: desc_ring[i].control = 0
-	 *   2. Set buffer length: desc_ring[i].length = buffer_size
-	 *   3. Set destination address: desc_ring[i].dst_addr = buffers[i].dma_addr
-	 *   4. Set next descriptor (for chaining, or 0 for ring mode):
-	 *      desc_ring[i].next_desc = 0;  // We use ring mode, not chaining
-	 *   5. Clear reserved: desc_ring[i].reserved = 0
-	 *
-	 * After init, submit all descriptors to make them available:
-	 *   pfpga_submit_descriptors(pfdev, desc_count - 1);
-	 *   (Leave one slot empty to distinguish full from empty)
-	 */
+	for (int i = 0; i < pfdev->desc_count - 1; i++) {
+		struct phantomfpga_sg_desc *desc = pfdev->desc_ring + i;
+		struct phantomfpga_buffer *buffer = pfdev->buffers + i;
+
+		desc->dst_addr = buffer->dma_addr;
+		desc->length = buffer->size;
+		desc->control = 0;
+		desc->next_desc = 0;
+		desc->reserved = 0;
+	}
+
+	pfdev->desc_head = pfdev->desc_count - 1;
+	pfdev->desc_tail = 0; 
+
+	pfpga_submit_descriptors(pfdev, pfdev->desc_count - 1);
 }
 
 /*
@@ -995,7 +978,7 @@ static void pfpga_free_descriptors(struct phantomfpga_dev *pfdev)
 		for (int i = 0; i < pfdev->desc_count; i++) {
 			struct phantomfpga_buffer *buffer = pfdev->buffers + i;
 			if (buffer->vaddr != NULL) {
-				dma_free_coherent(dev, pfdev->buffer_size, buffer->vaddr, buffer->dma_addr);
+				dma_free_coherent(dev, buffer->size, buffer->vaddr, buffer->dma_addr);
 			}
 		}
 
@@ -1022,24 +1005,25 @@ static int pfpga_alloc_descriptors(struct phantomfpga_dev *pfdev,
 	if (pfdev->desc_ring == NULL) {
 		goto alloc_err;
 	}
-	pfdev->desc_count = desc_count;
 
 	// Allocate buffers
 	pfdev->buffers = kzalloc(desc_count * sizeof(struct phantomfpga_buffer), GFP_KERNEL);
 	if (pfdev->buffers == NULL) {
 		goto alloc_err;
 	}
-	pfdev->buffer_size = buffer_size + sizeof(struct phantomfpga_completion);
+
+	size_t complete_buffer_size = buffer_size + sizeof(struct phantomfpga_completion);
 	for (int i = 0; i < desc_count; i++) {
 		struct phantomfpga_buffer *buffer = pfdev->buffers + i;
-		buffer->vaddr = dma_alloc_coherent(dev, pfdev->buffer_size, &buffer->dma_addr, GFP_KERNEL);
+		buffer->vaddr = dma_alloc_coherent(dev, complete_buffer_size, &buffer->dma_addr, GFP_KERNEL);
 		if (buffer->vaddr == NULL) {
 			goto alloc_err;
 		}
-		buffer->size = pfdev->buffer_size;
+		// TODO: Check if this should include the completion size too
+		buffer->size = complete_buffer_size;
 	}
 
-	dev_info(dev, "succesfully allocated descriptors\n");
+	dev_info(dev, "succesfully allocated descriptors, dma_ring at physical address: 0x%llx\n", pfdev->desc_ring_dma);
 	return 0;
 alloc_err:
 	pfpga_free_descriptors(pfdev);
@@ -1217,6 +1201,9 @@ static int phantomfpga_probe(struct pci_dev *pdev,
 	pfdev->buffer_size = PHANTOMFPGA_BUFFER_SIZE;
 	pfdev->configured = false;
 	pfdev->streaming = false;
+
+	pfpga_init_descriptors(pfdev);
+	pfpga_configure_desc_ring(pfdev);
 
 	dev_info(&pdev->dev, "PhantomFPGA v3.0 driver loaded\n");
 	return 0;
