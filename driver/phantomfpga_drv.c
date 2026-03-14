@@ -220,18 +220,10 @@ static void __maybe_unused pfpga_configure_desc_ring(struct phantomfpga_dev *pfd
  */
 static void __maybe_unused pfpga_apply_config(struct phantomfpga_dev *pfdev)
 {
-	/*
-	 * TODO: Write configuration to device registers
-	 *
-	 * Steps:
-	 *   1. Write pfdev->frame_rate to PHANTOMFPGA_REG_FRAME_RATE
-	 *   2. Write IRQ coalesce settings to PHANTOMFPGA_REG_IRQ_COALESCE:
-	 *      Use phantomfpga_irq_coalesce_pack(count, timeout)
-	 *   3. Enable all interrupts in PHANTOMFPGA_REG_IRQ_MASK:
-	 *      PHANTOMFPGA_IRQ_ALL
-	 *
-	 * Note: Frame size is fixed at 5120 bytes, no configuration needed.
-	 */
+	pfpga_write32(pfdev, PHANTOMFPGA_REG_FRAME_RATE, pfdev->frame_rate);
+	u32 irq_coalesce_reg = phantomfpga_irq_coalesce_pack(pfdev->irq_coalesce_count, pfdev->irq_coalesce_timeout);
+	pfpga_write32(pfdev, PHANTOMFPGA_REG_IRQ_COALESCE, irq_coalesce_reg);
+	pfpga_write32(pfdev, PHANTOMFPGA_REG_IRQ_MASK, PHANTOMFPGA_IRQ_ALL);
 }
 
 /*
@@ -665,6 +657,10 @@ static int pfpga_mmap(struct file *file, struct vm_area_struct *vma)
 	return -ENOTSUPP;
 }
 
+// Forward declare for the ioctl method
+static void pfpga_free_descriptors(struct phantomfpga_dev *pfdev);
+static int pfpga_alloc_descriptors(struct phantomfpga_dev *pfdev, u32 desc_count, size_t buffer_size);
+
 /*
  * IOCTL handler - the control center for device configuration.
  */
@@ -673,6 +669,7 @@ static long pfpga_ioctl(struct file *file, unsigned int cmd, unsigned long arg)
 	struct phantomfpga_dev *pfdev = file->private_data;
 	void __user *argp = (void __user *)arg;
 	int ret = 0;
+	struct device *dev = &pfdev->pdev->dev;
 
 	/*
 	 * The v3.0 ioctl interface provides:
@@ -700,28 +697,47 @@ static long pfpga_ioctl(struct file *file, unsigned int cmd, unsigned long arg)
 		{
 			struct phantomfpga_config cfg;
 
-			/*
-			 * TODO: Handle SET_CFG for frame streaming
-			 *
-			 * Steps:
-			 *   1. Check !pfdev->streaming (return -EBUSY if streaming)
-			 *   2. copy_from_user(&cfg, argp, sizeof(cfg))
-			 *   3. Validate parameters:
-			 *      - desc_count in [MIN_DESC_COUNT, MAX_DESC_COUNT]
-			 *      - desc_count is power of 2
-			 *      - frame_rate in [MIN_FRAME_RATE, MAX_FRAME_RATE]
-			 *   4. Calculate buffer size:
-			 *      buffer_size = PHANTOMFPGA_FRAME_SIZE + PHANTOMFPGA_COMPL_SIZE
-			 *   5. Allocate/reallocate descriptor ring and buffers if needed
-			 *   6. Store configuration in pfdev
-			 *   7. Call pfpga_apply_config()
-			 *   8. Call pfpga_configure_desc_ring()
-			 *   9. Call pfpga_init_descriptors()
-			 *  10. Set pfdev->configured = true
-			 *  11. Return 0
-			 */
-			(void)cfg;
-			ret = -ENOTSUPP;
+			if (pfdev->streaming) {
+				// Streaming is activated
+				ret = -EBUSY;
+				break;
+			}
+			if (copy_from_user(&cfg, argp, sizeof(cfg)) != 0) {
+				dev_warn(dev, "IOCTL: Failed to copy from user buffer");
+				ret = -EINVAL;
+				break;
+			}
+			if (cfg.desc_count > PHANTOMFPGA_MAX_DESC_COUNT || 
+				cfg.desc_count < PHANTOMFPGA_MIN_DESC_COUNT ||
+				!is_power_of_2(cfg.desc_count)) 
+			{
+				dev_warn(dev, "IOCTL: Failed validation of desc_count: %d", cfg.desc_count);
+				ret = -EINVAL;
+				break;
+			}
+			if (cfg.frame_rate > PHANTOMFPGA_MAX_FRAME_RATE || cfg.frame_rate < PHANTOMFPGA_MIN_FRAME_RATE) {
+				dev_warn(dev, "IOCTL: Failed validation of frame_rate: %d", cfg.frame_rate);
+				ret = -EINVAL;
+				break;
+			}
+
+			if (cfg.desc_count != pfdev->desc_count) {
+				pfpga_free_descriptors(pfdev);
+				pfpga_alloc_descriptors(pfdev, cfg.desc_count, pfdev->buffer_size);
+				pfdev->desc_count = cfg.desc_count;
+				dev_info(dev, "ReAllocated dma buffers for %d descs", pfdev->desc_count);
+			}
+
+			pfdev->irq_coalesce_count = cfg.irq_coalesce_count;
+			pfdev->irq_coalesce_timeout = cfg.irq_coalesce_timeout;
+			pfdev->frame_rate = cfg.frame_rate;
+			pfpga_apply_config(pfdev);
+			pfpga_configure_desc_ring(pfdev);
+			pfpga_init_descriptors(pfdev);
+			pfdev->configured = true;
+
+			dev_info(dev, "Confgiured device for irq count: %d, irq timeout: %d, frame rate: %d", 
+				pfdev->irq_coalesce_count, pfdev->irq_coalesce_timeout, pfdev->frame_rate);
 		}
 		break;
 
@@ -1012,15 +1028,13 @@ static int pfpga_alloc_descriptors(struct phantomfpga_dev *pfdev,
 		goto alloc_err;
 	}
 
-	size_t complete_buffer_size = buffer_size + sizeof(struct phantomfpga_completion);
 	for (int i = 0; i < desc_count; i++) {
 		struct phantomfpga_buffer *buffer = pfdev->buffers + i;
-		buffer->vaddr = dma_alloc_coherent(dev, complete_buffer_size, &buffer->dma_addr, GFP_KERNEL);
+		buffer->vaddr = dma_alloc_coherent(dev, buffer_size, &buffer->dma_addr, GFP_KERNEL);
 		if (buffer->vaddr == NULL) {
 			goto alloc_err;
 		}
-		// TODO: Check if this should include the completion size too
-		buffer->size = complete_buffer_size;
+		buffer->size = buffer_size;
 	}
 
 	dev_info(dev, "succesfully allocated descriptors, dma_ring at physical address: 0x%llx\n", pfdev->desc_ring_dma);
@@ -1201,9 +1215,6 @@ static int phantomfpga_probe(struct pci_dev *pdev,
 	pfdev->buffer_size = PHANTOMFPGA_BUFFER_SIZE;
 	pfdev->configured = false;
 	pfdev->streaming = false;
-
-	pfpga_init_descriptors(pfdev);
-	pfpga_configure_desc_ring(pfdev);
 
 	dev_info(&pdev->dev, "PhantomFPGA v3.0 driver loaded\n");
 	return 0;

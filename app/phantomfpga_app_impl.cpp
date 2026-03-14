@@ -39,45 +39,28 @@
 class PhantomFpgaAppImpl : public PhantomFpgaApp {
 protected:
 
-	/*
-	 * TODO: Open the PhantomFPGA device node
-	 *
-	 * Steps:
-	 * 1. Call open() with O_RDWR on DEVICE_PATH
-	 * 2. Store the result in dev_fd_ using FileDescriptor
-	 *
-	 * Example:
-	 *   int fd = ::open(DEVICE_PATH, O_RDWR);
-	 *   if (fd < 0) return -errno;
-	 *   dev_fd_ = FileDescriptor(fd);
-	 *   return 0;
-	 */
 	int open_device() override
 	{
-		/* --- YOUR CODE HERE --- */
-		fprintf(stderr, "TODO: Implement open_device()\n");
-		return -ENODEV;
-		/* --- END YOUR CODE --- */
+		int fd = ::open("/dev/phantomfpga0", O_RDWR);
+		if (fd < 0) {
+			return -errno;
+		}
+		this->dev_fd_ = FileDescriptor(fd);
+		return 0;
 	}
 
-	/*
-	 * TODO: Configure the device
-	 *
-	 * Steps:
-	 * 1. Create a struct phantomfpga_config (zero-initialize it!)
-	 * 2. Fill in desc_count and frame_rate from config_
-	 * 3. Set irq_coalesce_count and irq_coalesce_timeout (use the
-	 *    DEFAULT_IRQ_COUNT and DEFAULT_IRQ_TIMEOUT constants)
-	 * 4. Call ioctl(dev_fd_.get(), PHANTOMFPGA_IOCTL_SET_CFG, &cfg)
-	 *
-	 * Hint: Zero-init with = {} or memset to clear the reserved fields.
-	 */
 	int configure_device() override
 	{
-		/* --- YOUR CODE HERE --- */
-		fprintf(stderr, "TODO: Implement configure_device()\n");
-		return -1;
-		/* --- END YOUR CODE --- */
+		phantomfpga_config config = {};
+		config.desc_count = this->config_.desc_count;
+		config.frame_rate = this->config_.frame_rate;
+		config.irq_coalesce_count = DEFAULT_IRQ_COUNT;
+		config.irq_coalesce_timeout = DEFAULT_IRQ_TIMEOUT;
+
+		int ret = ::ioctl(this->dev_fd_.get(), PHANTOMFPGA_IOCTL_SET_CFG, &config);
+		if (ret < 0) return -errno;
+
+		return 0;
 	}
 
 	/*
