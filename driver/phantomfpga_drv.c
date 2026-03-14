@@ -925,47 +925,51 @@ static const struct file_operations phantomfpga_fops = {
 static int pfpga_setup_msix(struct phantomfpga_dev *pfdev)
 {
 	struct pci_dev *pdev = pfdev->pdev;
+	struct device *dev = &pdev->dev;
 	int ret;
 
-	/*
-	 * TODO: Setup MSI-X interrupts
-	 *
-	 * Steps:
-	 *   1. Allocate MSI-X vectors (v3.0 has 3 vectors):
-	 *      ret = pci_alloc_irq_vectors(pdev, PHANTOMFPGA_MSIX_VECTORS,
-	 *                                  PHANTOMFPGA_MSIX_VECTORS, PCI_IRQ_MSIX);
-	 *      if (ret < 0) {
-	 *          // Fallback to MSI or legacy
-	 *          ret = pci_alloc_irq_vectors(pdev, 1, 1,
-	 *                                      PCI_IRQ_MSI | PCI_IRQ_LEGACY);
-	 *          if (ret < 0) return ret;
-	 *      }
-	 *      pfdev->num_vectors = ret;
-	 *
-	 *   2. Get IRQ numbers:
-	 *      pfdev->irq_complete = pci_irq_vector(pdev, PHANTOMFPGA_MSIX_VEC_COMPLETE);
-	 *      if (pfdev->num_vectors > 1)
-	 *          pfdev->irq_error = pci_irq_vector(pdev, PHANTOMFPGA_MSIX_VEC_ERROR);
-	 *      if (pfdev->num_vectors > 2)
-	 *          pfdev->irq_no_desc = pci_irq_vector(pdev, PHANTOMFPGA_MSIX_VEC_NO_DESC);
-	 *
-	 *   3. Request IRQs:
-	 *      ret = request_irq(pfdev->irq_complete, pfpga_irq_complete,
-	 *                        0, DRIVER_NAME "-complete", pfdev);
-	 *      // Similar for error and no_desc vectors
-	 *
-	 *   4. Return 0 on success
-	 */
+	// Allcoate vectors
+	ret = pci_alloc_irq_vectors(pdev, PHANTOMFPGA_MSIX_VECTORS, PHANTOMFPGA_MSIX_VECTORS, PCI_IRQ_MSIX);
+	if (ret < PHANTOMFPGA_MSIX_VECTORS) {
+		dev_info(dev, "Error allocating MSI-X IRQ vectors");
+		return ret;
+	}
+	pfdev->num_vectors = ret;
+	
+	// Get irq numbers
+	pfdev->irq_complete = pci_irq_vector(pdev, PHANTOMFPGA_MSIX_VEC_COMPLETE);
+	pfdev->irq_error = pci_irq_vector(pdev, PHANTOMFPGA_MSIX_VEC_ERROR);
+	pfdev->irq_no_desc = pci_irq_vector(pdev, PHANTOMFPGA_MSIX_VEC_NO_DESC);
 
-	(void)pdev;
-	(void)ret;
-	pfdev->num_vectors = 0;
-	pfdev->irq_complete = -1;
-	pfdev->irq_error = -1;
-	pfdev->irq_no_desc = -1;
+	// Request irq
+	ret = request_irq(pfdev->irq_complete, pfpga_irq_complete, 0, DRIVER_NAME "-complete", pfdev);
+	if (ret < 0) {
+		goto err_complete_irq;
+	}
+	ret = request_irq(pfdev->irq_error, pfpga_irq_error, 0, DRIVER_NAME "-error", pfdev);
+	if (ret < 0) {
+		goto err_error_irq;
+	}
+	ret = request_irq(pfdev->irq_no_desc, pfpga_irq_no_desc, 0, DRIVER_NAME "-no_desc", pfdev);
+	if (ret < 0) {
+		goto err_no_desc_irq;
+	}
 
-	dev_info(&pdev->dev, "MSI-X setup skipped (TODO)\n");
+	dev_info(dev, "MSI-X IRQ setup completed succesfully");
 	return 0;
+
+err_no_desc_irq:
+	free_irq(pfdev->irq_error, pfdev);
+	pfdev->irq_no_desc = -1;
+err_error_irq:
+	free_irq(pfdev->irq_complete, pfdev);
+	pfdev->irq_error = -1;
+err_complete_irq:
+	pfdev->irq_complete = -1;
+	pci_free_irq_vectors(pdev);
+	pfdev->num_vectors = 0;
+
+	return ret;
 }
 
 /*
@@ -973,22 +977,22 @@ static int pfpga_setup_msix(struct phantomfpga_dev *pfdev)
  */
 static void pfpga_teardown_msix(struct phantomfpga_dev *pfdev)
 {
-	/*
-	 * TODO: Release MSI-X resources
-	 *
-	 * Steps:
-	 *   1. Free IRQs:
-	 *      if (pfdev->irq_complete >= 0)
-	 *          free_irq(pfdev->irq_complete, pfdev);
-	 *      if (pfdev->irq_error >= 0)
-	 *          free_irq(pfdev->irq_error, pfdev);
-	 *      if (pfdev->irq_no_desc >= 0)
-	 *          free_irq(pfdev->irq_no_desc, pfdev);
-	 *
-	 *   2. Free vectors:
-	 *      if (pfdev->num_vectors > 0)
-	 *          pci_free_irq_vectors(pfdev->pdev);
-	 */
+	if (pfdev->irq_complete >= 0) {
+		free_irq(pfdev->irq_complete, pfdev);
+		pfdev->irq_complete = -1;
+	}
+	if (pfdev->irq_error >= 0) {
+		free_irq(pfdev->irq_error, pfdev);
+		pfdev->irq_error = -1;
+	}
+	if (pfdev->irq_no_desc >= 0) {
+		free_irq(pfdev->irq_no_desc, pfdev);
+		pfdev->irq_no_desc = -1;
+	}
+	
+	if (pfdev->num_vectors > 0) {
+		pci_free_irq_vectors(pfdev->pdev);
+	}
 }
 
 /*
