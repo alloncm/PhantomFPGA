@@ -86,32 +86,18 @@ protected:
 		/* --- END YOUR CODE --- */
 	}
 
-	/*
-	 * TODO: Start frame streaming
-	 *
-	 * Just one ioctl call:
-	 *   ioctl(dev_fd_.get(), PHANTOMFPGA_IOCTL_START)
-	 */
 	int start_streaming() override
 	{
-		/* --- YOUR CODE HERE --- */
-		fprintf(stderr, "TODO: Implement start_streaming()\n");
-		return -1;
-		/* --- END YOUR CODE --- */
+		int ret = ::ioctl(this->dev_fd_.get(), PHANTOMFPGA_IOCTL_START);
+		if (ret < 0) return -errno;
+		return 0;
 	}
 
-	/*
-	 * TODO: Stop frame streaming
-	 *
-	 * Just one ioctl call:
-	 *   ioctl(dev_fd_.get(), PHANTOMFPGA_IOCTL_STOP)
-	 */
 	int stop_streaming() override
 	{
-		/* --- YOUR CODE HERE --- */
-		fprintf(stderr, "TODO: Implement stop_streaming()\n");
-		return -1;
-		/* --- END YOUR CODE --- */
+		int ret = ::ioctl(this->dev_fd_.get(), PHANTOMFPGA_IOCTL_STOP);
+		if (ret < 0) return -errno;
+		return 0;
 	}
 
 	/*

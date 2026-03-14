@@ -212,6 +212,7 @@ static void __maybe_unused pfpga_configure_desc_ring(struct phantomfpga_dev *pfd
 	wmb();
 	pfpga_write32(pfdev, PHANTOMFPGA_REG_DESC_RING_LO, lower_32_bits(pfdev->desc_ring_dma));
 	pfpga_write32(pfdev, PHANTOMFPGA_REG_DESC_RING_HI, upper_32_bits(pfdev->desc_ring_dma));
+	pfpga_write32(pfdev, PHANTOMFPGA_REG_DESC_RING_SIZE, pfdev->desc_count);
 }
 
 /*
@@ -269,25 +270,21 @@ static void __maybe_unused pfpga_init_descriptors(struct phantomfpga_dev *pfdev)
  */
 static int pfpga_start_streaming(struct phantomfpga_dev *pfdev)
 {
-	/*
-	 * TODO: Start the device streaming
-	 *
-	 * Steps:
-	 *   1. Check pfdev->configured - return -EINVAL if not configured
-	 *   2. Check pfdev->streaming - return -EBUSY if already streaming
-	 *   3. Reset indices: desc_head = desc_tail = shadow_tail = consumer = 0
-	 *   4. Write 0 to PHANTOMFPGA_REG_DESC_HEAD and DESC_TAIL
-	 *   5. Re-initialize descriptors (clear COMPLETED flags)
-	 *   6. Submit all available descriptors
-	 *   7. Clear any pending IRQs: write PHANTOMFPGA_IRQ_ALL to IRQ_STATUS
-	 *   8. Write CTRL register:
-	 *      PHANTOMFPGA_CTRL_RUN | PHANTOMFPGA_CTRL_IRQ_EN
-	 *   9. Set pfdev->streaming = true
-	 *  10. Return 0
-	 *
-	 * Locking: Called with ioctl_lock held
-	 */
-	return -ENOTSUPP;  /* Remove this when implemented */
+	// Called from the ioctl so the lock should be held
+
+	if (!pfdev->configured) return -EINVAL;
+	if (pfdev->streaming) return -EBUSY;
+	pfdev->desc_tail = 0;
+	pfdev->consumer = 0;
+	pfdev->shadow_tail = 0;
+	
+	pfpga_init_descriptors(pfdev);
+	// Clear interrupts
+	pfpga_write32(pfdev, PHANTOMFPGA_REG_IRQ_STATUS, PHANTOMFPGA_IRQ_ALL);
+	// Start with interrupts
+	pfpga_write32(pfdev, PHANTOMFPGA_REG_CTRL, PHANTOMFPGA_CTRL_RUN | PHANTOMFPGA_CTRL_IRQ_EN);
+
+	return 0;
 }
 
 /*
@@ -310,6 +307,15 @@ static int pfpga_stop_streaming(struct phantomfpga_dev *pfdev)
 	 *
 	 * Locking: Called with ioctl_lock held
 	 */
+
+	u32 ctrl_reg = pfpga_read32(pfdev, PHANTOMFPGA_REG_CTRL);
+	ctrl_reg = ctrl_reg & (~PHANTOMFPGA_CTRL_RUN);
+	pfpga_write32(pfdev, PHANTOMFPGA_REG_CTRL, ctrl_reg);
+
+	pfdev->streaming = false;
+
+	// TODO: Wakeup any waiters, not implemented right now
+
 	return 0;
 }
 
@@ -757,10 +763,12 @@ static long pfpga_ioctl(struct file *file, unsigned int cmd, unsigned long arg)
 
 	case PHANTOMFPGA_IOCTL_START:
 		ret = pfpga_start_streaming(pfdev);
+		dev_info(dev, "Start streaming ioctl called");
 		break;
 
 	case PHANTOMFPGA_IOCTL_STOP:
 		ret = pfpga_stop_streaming(pfdev);
+		dev_info(dev, "Stop streaming ioctl called");
 		break;
 
 	case PHANTOMFPGA_IOCTL_GET_STATS:
