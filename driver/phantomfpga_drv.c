@@ -350,32 +350,23 @@ static void pfpga_soft_reset(struct phantomfpga_dev *pfdev)
 static irqreturn_t __maybe_unused pfpga_irq_complete(int irq, void *data)
 {
 	struct phantomfpga_dev *pfdev = data;
-	u32 irq_status;
+	struct device *dev = &pfdev->pdev->dev;
 
-	/*
-	 * TODO: Handle completion interrupt
-	 *
-	 * Steps:
-	 *   1. Read IRQ_STATUS register
-	 *   2. Check if PHANTOMFPGA_IRQ_COMPLETE bit is set
-	 *   3. Clear the interrupt by writing back (write-1-to-clear)
-	 *   4. Read new DESC_TAIL from device (completed descriptors)
-	 *   5. Update pfdev->shadow_tail under spinlock
-	 *   6. Increment pfdev->irq_count
-	 *   7. Wake up poll waiters
-	 *   8. Return IRQ_HANDLED
-	 *
-	 * Pattern:
-	 *   spin_lock(&pfdev->lock);
-	 *   pfdev->shadow_tail = pfpga_read32(pfdev, PHANTOMFPGA_REG_DESC_TAIL);
-	 *   pfdev->irq_count++;
-	 *   spin_unlock(&pfdev->lock);
-	 *   wake_up_interruptible(&pfdev->wait_queue);
-	 */
+	u32 irq_status = pfpga_read32(pfdev, PHANTOMFPGA_REG_IRQ_STATUS);
+	if ((irq_status & PHANTOMFPGA_IRQ_COMPLETE) == 0) {
+		dev_warn_ratelimited(dev, "COMPLETE IRQ: Received inrerrupt status: %x, not handling it\n", irq_status);
+		return IRQ_NONE;
+	}
 
-	(void)irq_status;
-	(void)pfdev;
-	return IRQ_NONE;  /* Change to IRQ_HANDLED when implemented */
+	pfpga_write32(pfdev, PHANTOMFPGA_REG_IRQ_STATUS, PHANTOMFPGA_IRQ_COMPLETE);
+	spin_lock(&pfdev->lock);
+	pfdev->shadow_tail = pfpga_read32(pfdev, PHANTOMFPGA_REG_DESC_TAIL);
+	pfdev->irq_count++;
+	spin_unlock(&pfdev->lock);
+
+	wake_up_interruptible(&pfdev->wait_queue);
+
+	return IRQ_HANDLED;
 }
 
 /*
@@ -386,21 +377,23 @@ static irqreturn_t __maybe_unused pfpga_irq_complete(int irq, void *data)
 static irqreturn_t __maybe_unused pfpga_irq_error(int irq, void *data)
 {
 	struct phantomfpga_dev *pfdev = data;
+	struct device *dev = &pfdev->pdev->dev;
 
-	/*
-	 * TODO: Handle error interrupt
-	 *
-	 * Steps:
-	 *   1. Read and clear IRQ_STATUS
-	 *   2. Check PHANTOMFPGA_IRQ_ERROR bit
-	 *   3. Log warning:
-	 *      dev_warn(&pfdev->pdev->dev, "error interrupt: status=0x%x\n", status);
-	 *   4. Wake up waiters so they can handle the condition
-	 *   5. Return IRQ_HANDLED
-	 */
+	u32 irq_status = pfpga_read32(pfdev, PHANTOMFPGA_REG_IRQ_STATUS);
+	if ((irq_status & PHANTOMFPGA_IRQ_ERROR) == 0) {
+		dev_warn_ratelimited(dev, "ERROR IRQ: Received inrerrupt status: %x, not handling it\n", irq_status);
+		return IRQ_NONE;
+	}
 
-	(void)pfdev;
-	return IRQ_NONE;
+	pfpga_write32(pfdev, PHANTOMFPGA_REG_IRQ_STATUS, PHANTOMFPGA_IRQ_ERROR);
+
+	u32 status = pfpga_read32(pfdev, PHANTOMFPGA_REG_STATUS);
+
+	dev_warn_ratelimited(dev, "ERROR IRQ: status: 0x%x\n", status);
+
+	wake_up_interruptible(&pfdev->wait_queue);
+
+	return IRQ_HANDLED;
 }
 
 /*
@@ -412,23 +405,20 @@ static irqreturn_t __maybe_unused pfpga_irq_error(int irq, void *data)
 static irqreturn_t __maybe_unused pfpga_irq_no_desc(int irq, void *data)
 {
 	struct phantomfpga_dev *pfdev = data;
+	struct device *dev = &pfdev->pdev->dev;
 
-	/*
-	 * TODO: Handle no-descriptor interrupt
-	 *
-	 * Steps:
-	 *   1. Read and clear IRQ_STATUS (PHANTOMFPGA_IRQ_NO_DESC bit)
-	 *   2. Log debug (this is expected under load):
-	 *      dev_dbg(&pfdev->pdev->dev, "no descriptors available\n");
-	 *   3. Wake up waiters to potentially free descriptors
-	 *   4. Return IRQ_HANDLED
-	 *
-	 * Note: If you see this often, either increase descriptor count
-	 * or reduce frame rate. Check STAT_FRAMES_DROP for total drops.
-	 */
+	u32 irq_status = pfpga_read32(pfdev, PHANTOMFPGA_REG_IRQ_STATUS);
+	if ((irq_status & PHANTOMFPGA_IRQ_NO_DESC) == 0) {
+		dev_warn_ratelimited(dev, "NO_DESC IRQ: Received inrerrupt status: %x, not handling it\n", irq_status);
+		return IRQ_NONE;
+	}
 
-	(void)pfdev;
-	return IRQ_NONE;
+	pfpga_write32(pfdev, PHANTOMFPGA_REG_IRQ_STATUS, PHANTOMFPGA_IRQ_NO_DESC);
+
+	dev_dbg(dev, "no descs avalible\n");
+	wake_up_interruptible(&pfdev->wait_queue);
+
+	return IRQ_HANDLED;
 }
 
 /* ------------------------------------------------------------------------ */
@@ -968,6 +958,8 @@ err_complete_irq:
 	pfdev->irq_complete = -1;
 	pci_free_irq_vectors(pdev);
 	pfdev->num_vectors = 0;
+
+	dev_warn(dev, "MSI-X IRQ setup failed");
 
 	return ret;
 }
