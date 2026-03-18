@@ -129,7 +129,9 @@ cd ../..
 This will:
 - Download QEMU 10.2.0 source code
 - Copy our device files into the QEMU tree
-- Build QEMU for both x86_64 and aarch64 targets
+- Build QEMU for **both x86_64 and aarch64** targets (always, no flags needed)
+
+Both `qemu-system-x86_64` and `qemu-system-aarch64` binaries will be ready to use regardless of your host architecture.
 
 **What you should see at the end:**
 ```
@@ -161,7 +163,12 @@ cd ../..
 ```
 
 > [!NOTE]
-> This takes 20-40 minutes, YMMV. The Makefile automatically picks the right architecture for your computer.
+> This takes 20-40 minutes, YMMV. By default, `make` builds for your host architecture (x86_64 on x86_64 machines, aarch64 on ARM64 machines). To cross-build for a different target:
+> ```bash
+> make x86_64     # Force x86_64 build
+> make aarch64    # Force aarch64 build
+> make all-arches # Build both
+> ```
 
 **What you should see at the end** (don't move to Step 4 until you see this!):
 ```
@@ -180,6 +187,12 @@ The moment of truth:
 
 ```bash
 ./platform/run_qemu.sh
+```
+
+By default this picks the same architecture you built in Step 3. If you built for a different (or both) architecture(s), specify which one to boot:
+
+```bash
+./platform/run_qemu.sh --arch aarch64
 ```
 
 **What you should see:**
@@ -507,20 +520,13 @@ And then... well. You'll see what you'll see. Or you won't, if something's broke
 > [!NOTE]
 > Make sure your terminal is at least 110 columns wide and 45 rows tall. Just trust me on this one.
 
-## Building for a different architecture
+## Cross-architecture builds
 
-The Makefile auto-detects your architecture, but you can explicitly build for a specific one:
+As noted in the Quick Start, both x86_64 and aarch64 are first-class targets:
 
-```bash
-cd platform/buildroot
-make x86_64     # Force x86_64 build
-make aarch64    # Force aarch64 build
-make all-arches # Build both
-cd ../..
-
-# Run a specific architecture
-./platform/run_qemu.sh --arch aarch64
-```
+- **QEMU** always builds both architectures, nothing to configure.
+- **Linux (Buildroot)** defaults to the host arch but accepts `make x86_64`, `make aarch64`, or `make all-arches`.
+- **run_qemu.sh** auto-detects the arch, or you can pass `--arch x86_64` / `--arch aarch64`.
 
 Same device, same driver code, different architecture. That's the beauty of proper abstractions.
 
