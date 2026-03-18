@@ -8,20 +8,20 @@
  * Read phantomfpga_view.h for the class interface and frame constants.
  *
  * Available members from the base class (PhantomFpgaViewer):
- *   client_        -- TcpClient with read_exact(buf, len, &running_)
- *   terminal_      -- Terminal with clear_screen(), cursor_home(), etc.
- *   frame_buffer_  -- std::array<uint8_t, 5120> for the current frame
- *   stats_         -- ViewerStats (frames_received, frames_dropped, etc.)
- *   running_       -- volatile bool, goes false on Ctrl+C
- *   record_path_   -- filename from --record flag (empty = no recording)
+ *   client_        :  TcpClient with read_exact(buf, len, &running_)
+ *   terminal_      :  Terminal with clear_screen(), cursor_home(), etc.
+ *   frame_buffer_  :  std::array<uint8_t, 5120> for the current frame
+ *   stats_         :  ViewerStats (frames_received, frames_dropped, etc.)
+ *   running_       :  volatile bool, goes false on Ctrl+C
+ *   record_path_   :  filename from --record flag (empty = no recording)
  *
  * Frame layout (frame::SIZE = 5120 bytes):
- *   Offset 0:    FrameHeader (16 bytes) -- magic, sequence, reserved
- *   Offset 16:   Payload (4995 bytes) -- frame data
- *   Offset 5116: CRC32 (4 bytes) -- IEEE 802.3
+ *   Offset 0:    FrameHeader (16 bytes) :  magic, sequence, reserved
+ *   Offset 16:   Payload (4995 bytes)  :  frame data
+ *   Offset 5116: CRC32 (4 bytes)       :  IEEE 802.3
  *
  * Utility:
- *   CRC32::compute(data, len) -- returns uint32_t
+ *   CRC32::compute(data, len)  :  returns uint32_t
  */
 
 #include "phantomfpga_view.h"
@@ -29,7 +29,7 @@
 #include <arpa/inet.h>
 
 /* ----------------------------------------------------------------------- */
-/* PhantomFpgaViewerImpl -- YOUR CODE GOES HERE                            */
+/* PhantomFpgaViewerImpl: YOUR CODE GOES HERE                              */
 /*                                                                         */
 /* Implement the 7 TODO methods below. The base class handles TCP          */
 /* connection, terminal setup, signal handling, and the main loop.         */
@@ -111,7 +111,7 @@ protected:
 	 *
 	 * The ASCII frame data starts at frame::DATA_OFFSET (16 bytes in)
 	 * and is frame::DATA_SIZE (4995) bytes long. It already contains
-	 * newlines separating the rows -- just dump it to stdout.
+	 * newlines separating the rows, so just dump it to stdout.
 	 *
 	 * Steps:
 	 * 1. Move cursor to top-left: terminal_.cursor_home()
@@ -182,7 +182,7 @@ protected:
 	 * 3. In print_stats(), close the file if it was opened
 	 *
 	 * Recording format: raw 5120-byte frames, back to back. No extra
-	 * headers or metadata. This makes offline validation trivial -- just
+	 * headers or metadata. This makes offline validation trivial, just
 	 * read 5120-byte chunks and check each one.
 	 *
 	 * Record ALL received frames, even if they later fail validation.

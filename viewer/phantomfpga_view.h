@@ -6,11 +6,11 @@
  * ASCII frames in the terminal.
  *
  * Architecture:
- *   PhantomFpgaViewer (base)  -- provided infrastructure (don't touch)
- *   PhantomFpgaViewerImpl     -- your implementation (phantomfpga_view_impl.cpp)
+ *   PhantomFpgaViewer (base)  :  provided infrastructure (don't touch)
+ *   PhantomFpgaViewerImpl     :  your implementation (phantomfpga_view_impl.cpp)
  *
  * This viewer is independent of the kernel UAPI header. All frame
- * constants are defined locally -- the viewer only needs TCP and a
+ * constants are defined locally. The viewer only needs TCP and a
  * terminal to do its thing.
  */
 
@@ -31,7 +31,7 @@
 
 /* ======================================================================== */
 /* Frame Constants                                                          */
-/* Independent of the kernel header -- the viewer only knows TCP frames     */
+/* Independent of the kernel header. The viewer only knows TCP frames.      */
 /* ======================================================================== */
 
 namespace frame {
@@ -51,7 +51,7 @@ namespace frame {
 /* Frame Header                                                             */
 /* ======================================================================== */
 
-/* Local definition -- NOT from the UAPI header */
+/* Local definition, NOT from the UAPI header */
 struct FrameHeader {
 	uint32_t magic;       /* 0xF00DFACE */
 	uint32_t sequence;    /* Frame sequence number (0-249, wraps) */
@@ -74,7 +74,7 @@ struct ViewerStats {
 /* CRC32                                                                    */
 /* ======================================================================== */
 
-/* IEEE 802.3 CRC32 -- same as the device uses */
+/* IEEE 802.3 CRC32, same as the device uses */
 class CRC32 {
 public:
 	static uint32_t compute(const void* data, size_t len);
@@ -150,19 +150,19 @@ private:
  * handle frame reception, validation, and display.
  *
  * Protected members available to your implementation:
- *   client_        -- TcpClient for receiving frames
- *   terminal_      -- Terminal for ANSI escape sequences
- *   frame_buffer_  -- 5120-byte buffer for the current frame
- *   stats_         -- ViewerStats counters
- *   running_       -- false after Ctrl+C
- *   record_path_   -- filename from --record flag (empty = no recording)
+ *   client_        :  TcpClient for receiving frames
+ *   terminal_      :  Terminal for ANSI escape sequences
+ *   frame_buffer_  :  5120-byte buffer for the current frame
+ *   stats_         :  ViewerStats counters
+ *   running_       :  false after Ctrl+C
+ *   record_path_   :  filename from --record flag (empty = no recording)
  */
 class PhantomFpgaViewer {
 public:
 	PhantomFpgaViewer();
 	virtual ~PhantomFpgaViewer();
 
-	/* Entry point -- call from main() */
+	/* Entry point: call from main() */
 	int run(int argc, char* argv[]);
 
 protected:

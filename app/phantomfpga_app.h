@@ -6,8 +6,8 @@
  * the PhantomFPGA kernel driver and streaming them over TCP to a viewer.
  *
  * Architecture:
- *   PhantomFpgaApp (base)  -- provided infrastructure (don't touch)
- *   PhantomFpgaAppImpl     -- your implementation (in phantomfpga_app_impl.cpp)
+ *   PhantomFpgaApp (base)  :  provided infrastructure (don't touch)
+ *   PhantomFpgaAppImpl     :  your implementation (in phantomfpga_app_impl.cpp)
  *
  * The base class handles CLI parsing, TCP server, signal handling, and
  * cleanup. You implement the pure virtual methods to talk to the driver.
@@ -30,7 +30,7 @@
 #include <arpa/inet.h>
 #include <time.h>
 
-/* The UAPI header is C -- wrap it for C++ */
+/* The UAPI header is C, wrap it for C++ */
 extern "C" {
 #include "phantomfpga_uapi.h"
 }
@@ -59,7 +59,7 @@ public:
 	explicit FileDescriptor(int fd) : fd_(fd) {}
 	~FileDescriptor() { if (fd_ >= 0) ::close(fd_); }
 
-	/* Move-only -- copying a file descriptor is a recipe for double-close */
+	/* Move-only. Copying a file descriptor is a recipe for double-close. */
 	FileDescriptor(FileDescriptor&& other) noexcept : fd_(other.fd_) {
 		other.fd_ = -1;
 	}
@@ -129,7 +129,7 @@ private:
 /* ======================================================================== */
 
 /*
- * IEEE 802.3 CRC32 -- same polynomial as Ethernet and the FPGA device.
+ * IEEE 802.3 CRC32, same polynomial as Ethernet and the FPGA device.
  * Static-only class. No instances needed, just call CRC32::compute().
  */
 class CRC32 {
@@ -223,19 +223,19 @@ private:
  * methods in PhantomFpgaAppImpl (in phantomfpga_app_impl.cpp).
  *
  * Protected members are available to the derived class:
- *   dev_fd_      -- device file descriptor (wrap with FileDescriptor)
- *   buffer_pool_ -- mmap'd DMA buffers (wrap with MappedMemory)
- *   config_      -- parsed configuration
- *   stats_       -- runtime statistics
- *   tcp_server_  -- TCP server (may be nullptr if not requested)
- *   running_     -- set to false by signal handler on Ctrl+C
+ *   dev_fd_      :  device file descriptor (wrap with FileDescriptor)
+ *   buffer_pool_ :  mmap'd DMA buffers (wrap with MappedMemory)
+ *   config_      :  parsed configuration
+ *   stats_       :  runtime statistics
+ *   tcp_server_  :  TCP server (may be nullptr if not requested)
+ *   running_     :  set to false by signal handler on Ctrl+C
  */
 class PhantomFpgaApp {
 public:
 	PhantomFpgaApp();
 	virtual ~PhantomFpgaApp();
 
-	/* Entry point -- call from main() */
+	/* Entry point: call from main() */
 	int run(int argc, char* argv[]);
 
 protected:

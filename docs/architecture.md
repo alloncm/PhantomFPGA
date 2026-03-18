@@ -291,7 +291,7 @@ Each buffer = frame (5120 bytes) + completion writeback (16 bytes)
 
 ### Index management
 
-The descriptor ring has three pointers -- think of it as a two-stage pipeline:
+The descriptor ring has three pointers. Think of it as a two-stage pipeline:
 
 ```
 Ring with 8 descriptors (desc_count = 8):
@@ -362,7 +362,7 @@ MSI-X is how the device taps the CPU on the shoulder without being rude. Three v
 
 ### IRQ coalescing
 
-The IRQ_COALESCE register (0x03C) controls when completion interrupts fire. Two thresholds -- whichever hits first wins:
+The IRQ_COALESCE register (0x03C) controls when completion interrupts fire. Two thresholds, whichever hits first wins:
 
 | Setting | Field | Behavior |
 |---------|-------|----------|

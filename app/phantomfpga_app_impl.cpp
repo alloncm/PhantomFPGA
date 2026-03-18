@@ -10,17 +10,17 @@
  * Read phantomfpga_uapi.h for ioctl definitions and data structures.
  *
  * Available members from the base class (PhantomFpgaApp):
- *   dev_fd_       -- FileDescriptor for the device (you set this in open_device)
- *   buffer_pool_  -- MappedMemory for the DMA buffers (you set this in setup_mmap)
- *   config_       -- AppConfig with parsed CLI parameters
- *   stats_        -- AppStats for your counters
- *   tcp_server_   -- TcpServer (may be nullptr if --tcp-server wasn't used)
- *   running_      -- volatile bool, goes false on Ctrl+C
+ *   dev_fd_       :  FileDescriptor for the device (you set this in open_device)
+ *   buffer_pool_  :  MappedMemory for the DMA buffers (you set this in setup_mmap)
+ *   config_       :  AppConfig with parsed CLI parameters
+ *   stats_        :  AppStats for your counters
+ *   tcp_server_   :  TcpServer (may be nullptr if --tcp-server wasn't used)
+ *   running_      :  volatile bool, goes false on Ctrl+C
  *
  * Utility classes:
- *   CRC32::compute(data, len)  -- IEEE 802.3 CRC32, returns uint32_t
- *   FileDescriptor(fd)         -- RAII file descriptor, use std::move()
- *   MappedMemory(addr, size)   -- RAII mmap wrapper, use std::move()
+ *   CRC32::compute(data, len)  :  IEEE 802.3 CRC32, returns uint32_t
+ *   FileDescriptor(fd)         :  RAII file descriptor, use std::move()
+ *   MappedMemory(addr, size)   :  RAII mmap wrapper, use std::move()
  */
 
 #include "phantomfpga_app.h"
@@ -30,7 +30,7 @@
 #include <sys/ioctl.h>
 
 /* ----------------------------------------------------------------------- */
-/* PhantomFpgaAppImpl -- YOUR CODE GOES HERE                               */
+/* PhantomFpgaAppImpl: YOUR CODE GOES HERE                                 */
 /*                                                                         */
 /* Implement all the TODO methods below to make the app work.              */
 /* The base class handles everything else (CLI, TCP, signals, cleanup).    */

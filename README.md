@@ -91,7 +91,7 @@ You need **Linux**. This project won't run directly on macOS or Windows.
 | Windows | Use [WSL2](https://learn.microsoft.com/en-us/windows/wsl/install) with Ubuntu |
 
 > [!IMPORTANT]
-> **VM users (not native Linux laptop/PC):** Give your VM at least **8GB RAM** and **4 CPUs** -- the build compiles a lot of code in parallel. For Lima: `limactl edit <instance>` and add `cpus: 4` and `memory: "8GiB"`.
+> **VM users (not native Linux laptop/PC):** Give your VM at least **8GB RAM** and **4 CPUs**, since the build compiles a lot of code in parallel. For Lima: `limactl edit <instance>` and add `cpus: 4` and `memory: "8GiB"`.
 
 **Disk space:** About 15-20 GB. Yeah, I know. QEMU and Buildroot are hungry beasts.
 
@@ -297,7 +297,7 @@ You've got the environment running. Now comes the actual learning:
 
 The app and viewer are written in C++17. If you're coming from C (or if your C++
 knowledge stopped at `cout << "hello"` in college), here's what you actually need
-to know. This isn't a C++ textbook -- just the concepts you'll use in the TODO
+to know. This isn't a C++ textbook, just the concepts you'll use in the TODO
 methods.
 
 ### Classes and inheritance
@@ -306,7 +306,7 @@ The codebase uses a base class + derived class pattern. The base class (provided
 defines pure virtual methods. You implement them in the derived class (your file).
 
 ```cpp
-class PhantomFpgaApp {                 // Base class -- don't touch
+class PhantomFpgaApp {                 // Base class. Don't touch.
     virtual int open_device() = 0;     // "= 0" means you MUST implement this
 };
 
@@ -328,20 +328,20 @@ object, it acquires a resource. When the object goes out of scope, it releases i
 No `goto cleanup`. No `free()` you might forget.
 
 ```cpp
-// C way -- hope you remember to close() on every error path:
+// C way: hope you remember to close() on every error path.
 int fd = open("/dev/phantomfpga0", O_RDWR);
 // ... 50 lines of code with 4 error paths ...
 close(fd);  // did you close() in all the error paths? really?
 
-// C++ way -- FileDescriptor closes automatically when it's destroyed:
+// C++ way: FileDescriptor closes automatically when it's destroyed.
 dev_fd_ = FileDescriptor(fd);
 // When dev_fd_ goes out of scope (or gets reassigned), close() happens.
 // Even if an error occurs. Even if you forget. The destructor has your back.
 ```
 
 The codebase has two RAII wrappers:
-- **`FileDescriptor`** -- wraps a file descriptor, calls `close()` on destruction
-- **`MappedMemory`** -- wraps an `mmap()` region, calls `munmap()` on destruction
+- **`FileDescriptor`**: wraps a file descriptor, calls `close()` on destruction
+- **`MappedMemory`**: wraps an `mmap()` region, calls `munmap()` on destruction
 
 ### Move semantics
 
@@ -351,13 +351,13 @@ two owners trying to close the same fd). You transfer ownership instead:
 ```cpp
 int fd = ::open(DEVICE_PATH, O_RDWR);
 dev_fd_ = FileDescriptor(fd);   // fd is now owned by dev_fd_
-// Don't use the raw fd anymore -- dev_fd_ owns it now.
+// Don't use the raw fd anymore; dev_fd_ owns it now.
 
 void* addr = mmap(...);
 buffer_pool_ = MappedMemory(addr, size);  // same idea
 ```
 
-The `=` here triggers a *move assignment* -- ownership transfers from the
+The `=` here triggers a *move assignment*: ownership transfers from the
 temporary object on the right to the member on the left. The old value (if any)
 gets cleaned up automatically.
 
@@ -374,7 +374,7 @@ if (tcp_server_)                          // null check (same as != nullptr)
     tcp_server_->try_accept();            // arrow operator, just like C pointers
 ```
 
-You don't need to create or delete these yourself -- just use the ones the
+You don't need to create or delete these yourself. Just use the ones the
 base class gives you.
 
 ### std::array
@@ -404,12 +404,12 @@ namespace frame {
 if (hdr->magic == frame::MAGIC) { ... }
 ```
 
-`constexpr` means "evaluate at compile time" -- like `#define` but type-safe
+`constexpr` means "evaluate at compile time," like `#define` but type-safe
 and debugger-friendly.
 
 ### Static methods
 
-`CRC32::compute()` is a static method -- you call it on the class, not on an
+`CRC32::compute()` is a static method: you call it on the class, not on an
 instance. Think of it as a namespaced function:
 
 ```cpp
@@ -434,7 +434,7 @@ To interpret raw bytes as a struct (like reading a frame header):
 
 ```cpp
 auto* hdr = reinterpret_cast<const FrameHeader*>(frame_buffer_.data());
-// Or the C way -- still works, still fine for this:
+// Or the C way. Still works, still fine for this:
 auto* hdr = (const FrameHeader*)frame_buffer_.data();
 ```
 
@@ -454,10 +454,10 @@ cfg.frame_rate = config_.frame_rate;
 ### That's it
 
 If you know the above, you can complete every TODO in the codebase. You
-just fill in the methods with straightforward logic -- mostly the same
+just fill in the methods with straightforward logic, mostly the same
 POSIX calls you'd write in C, wrapped in slightly nicer containers.
 
-That said -- don't treat the base classes as black boxes. Read the headers
+That said, don't treat the base classes as black boxes. Read the headers
 (`phantomfpga_app.h`, `phantomfpga_view.h`) and the `.cpp` files that go
 with them. They're full of the patterns listed above, and seeing how RAII
 wrappers, move semantics, and class design work in real code is worth more
@@ -546,7 +546,7 @@ Same device, same driver code, different architecture. That's the beauty of prop
 ssh -p 2222 root@localhost
 ```
 
-> **To exit the VM**: press `Ctrl-A` then `X`. This is QEMU's escape sequence -- the `Ctrl-A` is like a "hey QEMU, this next key is for you, not the guest".
+> **To exit the VM**: press `Ctrl-A` then `X`. This is QEMU's escape sequence. The `Ctrl-A` is like a "hey QEMU, this next key is for you, not the guest".
 
 ## Troubleshooting
 
@@ -610,7 +610,7 @@ wget -q --spider https://buildroot.org && echo "OK" || echo "Network issue"
 
 ### "PATH contains spaces" (WSL)
 
-This is handled automatically -- the Buildroot Makefile strips Windows PATH entries before building. If you still see this error, make sure you have the latest version of this repository (`git pull`).
+This is handled automatically. The Buildroot Makefile strips Windows PATH entries before building. If you still see this error, make sure you have the latest version of this repository (`git pull`).
 
 ### "Device not showing up in lspci"
 

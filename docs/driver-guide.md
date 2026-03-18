@@ -31,7 +31,7 @@ The skeleton driver at `driver/phantomfpga_drv.c` provides:
 - Function signatures with detailed TODO comments
 - Working parts (PCI enable, BAR mapping, device verification, chardev creation)
 
-Your job is to complete the TODOs to make it fully functional. Each TODO has step-by-step instructions -- this guide explains the concepts behind those steps.
+Your job is to complete the TODOs to make it fully functional. Each TODO has step-by-step instructions; this guide explains the concepts behind those steps.
 
 ## Development workflow
 
@@ -86,18 +86,18 @@ The v3 device uses scatter-gather DMA. Instead of one big contiguous buffer, you
 
 You need to allocate two types of DMA memory:
 
-1. **The descriptor ring** -- an array of `struct phantomfpga_sg_desc` entries. The device reads these to find buffer addresses.
-2. **Per-descriptor buffers** -- one buffer per descriptor where the device writes frame data + completion status.
+1. **The descriptor ring**: an array of `struct phantomfpga_sg_desc` entries. The device reads these to find buffer addresses.
+2. **Per-descriptor buffers**: one buffer per descriptor where the device writes frame data + completion status.
 
 Both need to be allocated with `dma_alloc_coherent()` because the device accesses them via DMA. This gives you both a kernel virtual address (for your code) and a DMA/physical address (for the device).
 
 ### Things to think about
 
 - Each buffer must fit a full frame (5120 bytes) plus the completion writeback (16 bytes).
-- The descriptor ring is a contiguous array -- one `dma_alloc_coherent()` call.
-- The per-descriptor buffers are individual allocations -- loop over `desc_count`.
+- The descriptor ring is a contiguous array, so one `dma_alloc_coherent()` call covers it.
+- The per-descriptor buffers are individual allocations, so loop over `desc_count`.
 - If any allocation fails midway, you need to clean up everything you already allocated. The classic goto-based error unwinding pattern is your friend here.
-- Don't forget the corresponding `pfpga_free_descriptors()` -- balance every alloc with a free.
+- Don't forget the corresponding `pfpga_free_descriptors()`. Balance every alloc with a free.
 
 ### Verification
 
@@ -130,12 +130,12 @@ After initialization, you submit the descriptors by writing the HEAD register. T
 
 - The ring address is 64 bits but the registers are 32 bits each. Use `lower_32_bits()` and `upper_32_bits()`.
 - When initializing descriptors, clear the control field (especially the COMPLETED flag) and set the buffer address and length.
-- Leave one descriptor slot empty -- it's how you distinguish a full ring from an empty one.
+- Leave one descriptor slot empty; it's how you distinguish a full ring from an empty one.
 - The `pfpga_submit_descriptors()` function updates HEAD. You'll call it here and again later when recycling completed descriptors.
 
 ### Verify before moving on
 
-After programming the ring, read back the registers with `devmem` to confirm the device actually has the right address and size. A wrong address here means silent DMA corruption later -- much harder to debug.
+After programming the ring, read back the registers with `devmem` to confirm the device actually has the right address and size. A wrong address here means silent DMA corruption later, which is much harder to debug.
 
 ```bash
 devmem $((0x${BAR0} + 0x020))   # DESC_RING_LO
@@ -163,12 +163,12 @@ Starting the device means setting the CTRL.RUN and CTRL.IRQ_EN bits. Stopping me
 - Frame rate is the main knob: 1-60 fps.
 - IRQ coalescing is a packed register: count in the low 16 bits, timeout in the high 16 bits. There's a helper function `phantomfpga_irq_coalesce_pack()` in the register header.
 - Before starting, clear any stale IRQ_STATUS bits and reset the ring indices.
-- When stopping, wake up any processes sleeping in poll/read -- they need to know streaming ended.
+- When stopping, wake up any processes sleeping in poll/read. They need to know streaming ended.
 - The `pfpga_soft_reset()` function is similar but more aggressive: it resets everything back to defaults. Remember that reset clears the descriptor ring address too, so you'd need to reprogram it.
 
 ### Verify before moving on
 
-Test start/stop in isolation before adding interrupts. After `pfpga_start_streaming()`, read the STATUS register -- it should show the device as running. After stop, it should be idle again. If this doesn't work, interrupts won't either, and you'd be debugging the wrong layer.
+Test start/stop in isolation before adding interrupts. After `pfpga_start_streaming()`, read the STATUS register, which should show the device as running. After stop, it should be idle again. If this doesn't work, interrupts won't either, and you'd be debugging the wrong layer.
 
 ---
 
@@ -200,7 +200,7 @@ MSI-X gives each interrupt its own vector, so the handler immediately knows *why
 
 ### Verify before moving on
 
-After setup, check `/proc/interrupts` -- you should see three `phantomfpga` entries. If you see zero, MSI-X allocation failed silently. If you see one, you got legacy mode. Sort this out before writing the actual handlers.
+After setup, check `/proc/interrupts`. You should see three `phantomfpga` entries. If you see zero, MSI-X allocation failed silently. If you see one, you got legacy mode. Sort this out before writing the actual handlers.
 
 ---
 
@@ -212,22 +212,22 @@ After setup, check `/proc/interrupts` -- you should see three `phantomfpga` entr
 
 ### Background
 
-The completion handler is the hot path -- it runs every time the coalescing threshold triggers. It needs to:
+The completion handler is the hot path: it runs every time the coalescing threshold triggers. It needs to:
 
 1. Confirm the interrupt (read IRQ_STATUS)
-2. Clear it (write back to IRQ_STATUS -- W1C semantics)
+2. Clear it (write back to IRQ_STATUS, W1C semantics)
 3. Update the driver's view of which descriptors are done
 4. Wake up anyone waiting for data
 
-The error and no_desc handlers are simpler -- log, clear, wake waiters.
+The error and no_desc handlers are simpler: log, clear, wake waiters.
 
 ### Things to think about
 
 - You're in hard IRQ context. No sleeping, no `mutex_lock`, no `copy_to_user`. Keep it fast.
-- Use `spin_lock()` (not `spin_lock_irqsave()`) in the IRQ handler -- you're already interrupt-disabled.
+- Use `spin_lock()` (not `spin_lock_irqsave()`) in the IRQ handler, since you're already interrupt-disabled.
 - The device updates DESC_TAIL when it completes descriptors. Read it and store it in `shadow_tail` so the process context (read/poll) can see what's available.
 - Return `IRQ_HANDLED` if you processed the interrupt, `IRQ_NONE` if it wasn't yours.
-- `dev_warn_ratelimited()` is your friend for the error/no_desc handlers -- don't spam the log.
+- `dev_warn_ratelimited()` is your friend for the error/no_desc handlers. Don't spam the log.
 
 ### Verify before moving on
 
@@ -252,21 +252,21 @@ The read path is the main way userspace gets frame data. It needs to:
 5. Copy frame data to userspace
 6. Reset the descriptor and resubmit it for reuse
 
-The poll path just reports whether there's data available -- it doesn't consume anything.
+The poll path just reports whether there's data available; it doesn't consume anything.
 
 ### Things to think about
 
 - The `consumer` index tracks which descriptor the driver will consume next. It's separate from `desc_tail`/`shadow_tail` (which track what the device has completed).
 - For blocking reads, use `wait_event_interruptible()`. The condition should check if consumer has fallen behind shadow_tail.
-- Check `file->f_flags & O_NONBLOCK` -- return -EAGAIN if non-blocking and no data.
+- Check `file->f_flags & O_NONBLOCK` and return -EAGAIN if non-blocking and no data.
 - After consuming a frame, clear the descriptor's COMPLETED flag and resubmit it by advancing HEAD. This keeps the pipeline full.
 - The completion writeback lives at the end of the buffer. The helper `phantomfpga_completion_ptr()` calculates its location.
-- CRC validation: the helper functions are in the register header. Using them is optional but recommended -- how else will you know if fault injection is working?
+- CRC validation: the helper functions are in the register header. Using them is optional but recommended. How else will you know if fault injection is working?
 - For poll: `poll_wait()` registers your wait queue, then return EPOLLIN if data is available, EPOLLHUP if not streaming.
 
 ### Verify before moving on
 
-Get `read()` working before touching `poll()`. Write a tiny test program (or use the app) that opens the device, starts streaming, and calls `read()` in a loop. Print the first few bytes of each frame. If you see data that looks reasonable, you're in great shape. If you see garbage or zeros, check the completion status field first -- it tells you what the device thinks happened.
+Get `read()` working before touching `poll()`. Write a tiny test program (or use the app) that opens the device, starts streaming, and calls `read()` in a loop. Print the first few bytes of each frame. If you see data that looks reasonable, you're in great shape. If you see garbage or zeros, check the completion status field first, as it tells you what the device thinks happened.
 
 ---
 
@@ -284,13 +284,13 @@ When using mmap mode, userspace reads frame data directly from the DMA buffers i
 
 - Each descriptor buffer was allocated with `dma_alloc_coherent()`, which returns page-aligned memory. You can map them into userspace with `remap_pfn_range()` or `dma_mmap_coherent()`.
 - Since you have per-descriptor buffers (not one big contiguous allocation), mapping all of them into a single VMA requires a loop. Think about the stride between buffers in the virtual address space.
-- Use `pgprot_noncached()` for the page protection -- CPU must see DMA writes immediately.
+- Use `pgprot_noncached()` for the page protection. The CPU must see DMA writes immediately.
 - Set `VM_IO | VM_DONTEXPAND | VM_DONTDUMP` flags on the VMA.
 - Validate the request: is the device configured? Is the size reasonable? Is the offset zero?
 
 ### Verify before moving on
 
-mmap is tricky -- if it works, great. If it doesn't, you might get a SIGBUS or silent data corruption. Test with the viewer or a small program that mmaps, reads a frame, and prints it. Compare the output with what `read()` gives you -- they should be identical.
+mmap is tricky. If it works, great. If it doesn't, you might get a SIGBUS or silent data corruption. Test with the viewer or a small program that mmaps, reads a frame, and prints it. Compare the output with what `read()` gives you; they should be identical.
 
 ---
 
@@ -298,13 +298,13 @@ mmap is tricky -- if it works, great. If it doesn't, you might get a SIGBUS or s
 
 **Goal:** Wire up the control interface.
 
-**Skeleton function:** `pfpga_ioctl()` -- the switch/case structure is already there.
+**Skeleton function:** `pfpga_ioctl()` (the switch/case structure is already there).
 
 ### Background
 
-The ioctl interface is how userspace configures and controls the device. The switch structure and most of the boilerplate are already in the skeleton. The main one to implement is SET_CFG -- the rest are either done (GET_CFG, GET_STATS, RESET_STATS, GET_BUFFER_INFO) or straightforward (START/STOP call existing functions, SET_FAULT writes two registers).
+The ioctl interface is how userspace configures and controls the device. The switch structure and most of the boilerplate are already in the skeleton. The main one to implement is SET_CFG; the rest are either done (GET_CFG, GET_STATS, RESET_STATS, GET_BUFFER_INFO) or straightforward (START/STOP call existing functions, SET_FAULT writes two registers).
 
-### SET_CFG -- the meaty one
+### SET_CFG: the meaty one
 
 This is where everything comes together. You need to:
 
@@ -323,7 +323,7 @@ Used in mmap mode: advance the consumer index, reset the descriptor, resubmit. S
 
 ### SET_FAULT
 
-Write the fault flags and rate to the two fault registers. Straightforward -- but think about whether you want to allow this while streaming.
+Write the fault flags and rate to the two fault registers. Straightforward, but think about whether you want to allow this while streaming.
 
 ---
 
@@ -357,7 +357,7 @@ wmb();  /* Ensure descriptor fields hit memory before head update */
 pfpga_write32(pfdev, REG_DESC_HEAD, new_head);  /* MMIO write */
 ```
 
-If you're only doing register-to-register writes, `iowrite32` handles ordering for you -- no explicit barrier needed.
+If you're only doing register-to-register writes, `iowrite32` handles ordering for you, so no explicit barrier is needed.
 
 See the Glossary entry for Memory Barrier for more context.
 
@@ -376,11 +376,11 @@ dmesg -w                        # Watch messages in real-time
 dmesg | grep phantomfpga        # Filter for our driver
 ```
 
-### Kernel prints -- your best debugging tool
+### Kernel prints: your best debugging tool
 
-Seriously. GDB and fancy tracers have their place, but for kernel driver development, `dev_info()` and friends will get you through 90% of your bugs. Don't be shy about adding them -- you can always remove them later.
+Seriously. GDB and fancy tracers have their place, but for kernel driver development, `dev_info()` and friends will get you through 90% of your bugs. Don't be shy about adding them; you can always remove them later.
 
-**The `dev_*` family** -- always prefer these over raw `printk` or `pr_*`. They automatically prefix messages with the device name, so you know which device is talking:
+**The `dev_*` family**: always prefer these over raw `printk` or `pr_*`. They automatically prefix messages with the device name, so you know which device is talking:
 
 ```c
 dev_dbg(&pfdev->pdev->dev, "starting streaming\n");    /* Debug level */
@@ -418,7 +418,7 @@ dev_dbg(&pfdev->pdev->dev,
 **Rate-limited prints** for hot paths. In the IRQ handler or read path, a print per invocation will flood your log and slow everything to a crawl. Use `dev_dbg` (which is compiled out unless you enable it) or `dev_info_ratelimited()`:
 
 ```c
-/* In the IRQ handler -- fires often, don't spam */
+/* In the IRQ handler. Fires often, don't spam */
 dev_dbg(&pfdev->pdev->dev, "complete IRQ, shadow_tail now %u\n",
         pfdev->shadow_tail);
 ```
@@ -434,7 +434,7 @@ Or at boot via kernel command line:
 dyndbg="module phantomfpga +p"
 ```
 
-**When to remove them:** Once a function works reliably, downgrade `dev_info` to `dev_dbg` rather than deleting them. That way they're still there if you need them, but silent by default. Keep `dev_err` and `dev_warn` in error paths permanently -- those are part of proper driver behavior, not just debugging aids.
+**When to remove them:** Once a function works reliably, downgrade `dev_info` to `dev_dbg` rather than deleting them. That way they're still there if you need them, but silent by default. Keep `dev_err` and `dev_warn` in error paths permanently. Those are part of proper driver behavior, not just debugging aids.
 
 ### Checking device state
 
@@ -450,7 +450,7 @@ cat /proc/interrupts | grep phantomfpga
 
 # Read registers directly (useful before driver is working)
 BAR0=$(lspci -v -s 00:01.0 | grep "Memory at" | awk '{print $3}')
-devmem $((0x${BAR0} + 0x000))   # DEV_ID -- should be 0xF00DFACE
+devmem $((0x${BAR0} + 0x000))   # DEV_ID, should be 0xF00DFACE
 devmem $((0x${BAR0} + 0x00C))   # STATUS
 devmem $((0x${BAR0} + 0x040))   # STAT_FRAMES_TX
 ```
@@ -508,18 +508,18 @@ devmem $((0x${BAR0} + 0x5C)) w 10     # Every ~10 frames
 
 ## Suggested implementation order
 
-The parts above are numbered for reading order, but here's a practical build order -- each step gives you something testable. Do NOT skip ahead. Each step builds on the previous one, and each has a clear "it works" signal. If a step doesn't work, fix it before moving on. Debugging step 8 when step 3 is broken is not a good time.
+The parts above are numbered for reading order, but here's a practical build order, where each step gives you something testable. Do NOT skip ahead. Each step builds on the previous one, and each has a clear "it works" signal. If a step doesn't work, fix it before moving on. Debugging step 8 when step 3 is broken is not a good time.
 
-1. **Soft reset** (Part 3) -- simple, and probe already calls it
-2. **Descriptor allocation** (Part 1) -- verify with dmesg, check for leaks on rmmod
-3. **Descriptor ring setup** (Part 2) -- program registers, verify with devmem
-4. **MSI-X setup** (Part 4) -- check `/proc/interrupts`
-5. **Interrupt handlers** (Part 5) -- start simple, just clear and log
-6. **Configuration + start/stop** (Part 3) -- now you can start the device
-7. **Poll** (Part 6) -- get async notification working
-8. **Read** (Part 6) -- the moment of truth: data flows to userspace
-9. **Mmap** (Part 7) -- zero-copy path
-10. **IOCTLs** (Part 8) -- SET_CFG, CONSUME_FRAME, SET_FAULT
+1. **Soft reset** (Part 3): simple, and probe already calls it
+2. **Descriptor allocation** (Part 1): verify with dmesg, check for leaks on rmmod
+3. **Descriptor ring setup** (Part 2): program registers, verify with devmem
+4. **MSI-X setup** (Part 4): check `/proc/interrupts`
+5. **Interrupt handlers** (Part 5): start simple, just clear and log
+6. **Configuration + start/stop** (Part 3): now you can start the device
+7. **Poll** (Part 6): get async notification working
+8. **Read** (Part 6): the moment of truth, data flows to userspace
+9. **Mmap** (Part 7): zero-copy path
+10. **IOCTLs** (Part 8): SET_CFG, CONSUME_FRAME, SET_FAULT
 
 ---
 

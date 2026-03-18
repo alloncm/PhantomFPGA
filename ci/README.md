@@ -23,7 +23,7 @@ this is a training project, not a release pipeline.
 ```
 
 All three build jobs run in parallel. The `CI Success` gate job waits for all
-of them and fails if any failed -- use it as your branch protection rule.
+of them and fails if any failed. Use it as your branch protection rule.
 
 ## Triggers
 
