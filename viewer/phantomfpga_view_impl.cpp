@@ -49,7 +49,7 @@ protected:
 			printf("len param is currpted and does match expected. value: %d, expected: %ld\n", length, frame::SIZE);
 			return false;
 		}
-		if (client_.read_exact(frame_buffer_.data(), frame::SIZE, &running_)) {
+		if (!client_.read_exact(frame_buffer_.data(), frame::SIZE, &running_)) {
 			printf("Error reading the whole frame\n");
 			return false;
 		}

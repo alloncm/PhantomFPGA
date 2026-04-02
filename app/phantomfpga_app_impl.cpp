@@ -127,7 +127,7 @@ protected:
 				continue;
 			}
 			if (bytes_read != PHANTOMFPGA_FRAME_SIZE) {
-				printf("Error reading frame, frame is too short, size: %ld", bytes_read);
+				printf("Error reading frame, frame is too short, size: %ld\n", bytes_read);
 				continue;
 			}
 			printf("Read some frame\n");
@@ -168,7 +168,6 @@ protected:
 			ret = false;
 		}
 		if (config_.validate_crc) {
-			fprintf(stderr, "%p , size: %d\n", frame, frame_size);
 			const uint32_t crc = CRC32::compute(frame, frame_size - 4);
 			if (crc != *reinterpret_cast<const uint32_t*>((uint8_t*)frame + frame_size - 4)) {
 				stats_.crc_errors++;
