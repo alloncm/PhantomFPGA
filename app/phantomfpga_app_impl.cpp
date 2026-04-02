@@ -120,67 +120,65 @@ protected:
 	 */
 	void main_loop() override
 	{
-		/* --- YOUR CODE HERE --- */
-		fprintf(stderr, "TODO: Implement main_loop()\n");
 		while (running_) {
 			if (tcp_server_)
 				tcp_server_->try_accept();
-			sleep(1);
+
+			uint8_t frame_buf[PHANTOMFPGA_FRAME_SIZE];
+			ssize_t bytes_read = read(dev_fd_.get(), frame_buf, PHANTOMFPGA_FRAME_SIZE);
+			if (bytes_read < 0) {
+				printf("Error reading frame: %d: %s\n", errno, strerror(errno));
+				continue;
+			}
+			printf("Read frame\n");
+			process_frame(frame_buf, bytes_read);
 		}
-		/* --- END YOUR CODE --- */
 	}
 
-	/*
-	 * TODO: Process a single frame
-	 *
-	 * Steps:
-	 * 1. Call validate_frame(buffer, len) to check the frame
-	 * 2. Increment stats_.frames_received
-	 * 3. If valid: increment stats_.frames_valid
-	 * 4. If tcp_server_ has a client: call tcp_server_->send_frame(buffer, len)
-	 * 5. If config_.verbose: print frame info (sequence, size, valid/invalid)
-	 *
-	 * Returns 0 on success.
-	 */
 	int process_frame(const void* buffer, uint32_t len) override
 	{
-		/* --- YOUR CODE HERE --- */
-		fprintf(stderr, "TODO: Implement process_frame()\n");
-		(void)buffer;
-		(void)len;
-		return -1;
-		/* --- END YOUR CODE --- */
+		bool valid = validate_frame(buffer, len);
+		stats_.frames_received++;
+		if (valid) {
+			stats_.frames_valid++;
+		}
+
+		if (tcp_server_) {
+			tcp_server_->send_frame(buffer, len);
+		}
+
+		if (config_.verbose) {
+			printf("seq: %d, size: %d, valid: %d", stats_.last_seq, len, valid);
+		}
+
+		return 0;
 	}
 
-	/*
-	 * TODO: Validate a frame
-	 *
-	 * Check these things:
-	 * 1. Magic number: first 4 bytes should be PHANTOMFPGA_FRAME_MAGIC
-	 *    (read it as a struct phantomfpga_frame_header*)
-	 *    Increment stats_.magic_errors on failure.
-	 *
-	 * 2. Sequence continuity: the sequence number should be
-	 *    (stats_.last_seq + 1) % PHANTOMFPGA_FRAME_COUNT
-	 *    Increment stats_.seq_errors on mismatch.
-	 *    (Skip this check if !stats_.seq_initialized)
-	 *
-	 * 3. CRC32 (if config_.validate_crc):
-	 *    Compute CRC32::compute(frame, PHANTOMFPGA_FRAME_SIZE - 4)
-	 *    Compare with the stored CRC at offset (PHANTOMFPGA_FRAME_SIZE - 4)
-	 *    Increment stats_.crc_errors on mismatch.
-	 *
-	 * Update stats_.last_seq and stats_.seq_initialized.
-	 * Returns true if the frame is valid.
-	 */
 	bool validate_frame(const void* frame, uint32_t frame_size) override
 	{
-		/* --- YOUR CODE HERE --- */
-		fprintf(stderr, "TODO: Implement validate_frame()\n");
-		(void)frame;
-		(void)frame_size;
-		return false;
-		/* --- END YOUR CODE --- */
+		bool ret = true;
+		const phantomfpga_frame_header *header = reinterpret_cast<const phantomfpga_frame_header*>(frame);
+
+		if (PHANTOMFPGA_FRAME_MAGIC != header->magic) {
+			stats_.magic_errors++;
+			ret = false;
+		}
+		if (stats_.seq_initialized && header->sequence != (stats_.last_seq + 1) % PHANTOMFPGA_FRAME_COUNT) {
+			stats_.seq_errors++;
+			ret = false;
+		}
+		if (config_.validate_crc) {
+			printf("%p , size: %d", frame, frame_size);
+			const uint32_t crc = CRC32::compute(frame, frame_size - 4);
+			if (crc != *reinterpret_cast<const uint32_t*>((uint8_t*)frame + frame_size - 4)) {
+				stats_.crc_errors++;
+				ret = false;
+			}
+		}
+
+		stats_.last_seq = header->sequence;
+		stats_.seq_initialized = true;
+		return ret;
 	}
 
 	/*
