@@ -233,12 +233,11 @@ static void __maybe_unused pfpga_apply_config(struct phantomfpga_dev *pfdev)
  * After populating descriptors with buffer addresses, write the new
  * head index to tell the device how many are available.
  */
-static void __maybe_unused pfpga_submit_descriptors(struct phantomfpga_dev *pfdev, u32 count)
+static void pfpga_submit_descriptors(struct phantomfpga_dev *pfdev, u32 count)
 {
+	pfdev->desc_head = (pfdev->desc_head + count) & (pfdev->desc_count - 1);
 	// Ensures all the descriptors are up to date
 	wmb();
-
-	pfdev->desc_head = (pfdev->desc_head + count) & (pfdev->desc_count - 1);
 	pfpga_write32(pfdev, PHANTOMFPGA_REG_DESC_HEAD, pfdev->desc_head);
 }
 
@@ -246,7 +245,7 @@ static void __maybe_unused pfpga_submit_descriptors(struct phantomfpga_dev *pfde
  * Initialize all descriptors with buffer addresses.
  * Called once after buffer allocation.
  */
-static void __maybe_unused pfpga_init_descriptors(struct phantomfpga_dev *pfdev)
+static void pfpga_init_descriptors(struct phantomfpga_dev *pfdev)
 {
 	for (int i = 0; i < pfdev->desc_count - 1; i++) {
 		struct phantomfpga_sg_desc *desc = pfdev->desc_ring + i;
@@ -278,7 +277,6 @@ static int pfpga_start_streaming(struct phantomfpga_dev *pfdev)
 	pfdev->consumer = 0;
 	pfdev->shadow_tail = 0;
 	
-	pfpga_init_descriptors(pfdev);
 	// Clear interrupts
 	pfpga_write32(pfdev, PHANTOMFPGA_REG_IRQ_STATUS, PHANTOMFPGA_IRQ_ALL);
 	// Start with interrupts
@@ -349,7 +347,7 @@ static void pfpga_soft_reset(struct phantomfpga_dev *pfdev)
  * Called when descriptors complete (IRQ coalescing thresholds met).
  * The driver should process completed descriptors and wake up waiters.
  */
-static irqreturn_t __maybe_unused pfpga_irq_complete(int irq, void *data)
+static irqreturn_t pfpga_irq_complete(int irq, void *data)
 {
 	struct phantomfpga_dev *pfdev = data;
 	struct device *dev = &pfdev->pdev->dev;
@@ -360,6 +358,7 @@ static irqreturn_t __maybe_unused pfpga_irq_complete(int irq, void *data)
 		return IRQ_NONE;
 	}
 
+	dev_info_ratelimited(dev, "Got irq complete event");
 	pfpga_write32(pfdev, PHANTOMFPGA_REG_IRQ_STATUS, PHANTOMFPGA_IRQ_COMPLETE);
 	spin_lock(&pfdev->lock);
 	pfdev->shadow_tail = pfpga_read32(pfdev, PHANTOMFPGA_REG_DESC_TAIL);
@@ -376,7 +375,7 @@ static irqreturn_t __maybe_unused pfpga_irq_complete(int irq, void *data)
  *
  * Called on error conditions (DMA error, device error).
  */
-static irqreturn_t __maybe_unused pfpga_irq_error(int irq, void *data)
+static irqreturn_t pfpga_irq_error(int irq, void *data)
 {
 	struct phantomfpga_dev *pfdev = data;
 	struct device *dev = &pfdev->pdev->dev;
@@ -404,7 +403,7 @@ static irqreturn_t __maybe_unused pfpga_irq_error(int irq, void *data)
  * Called when device has frames to send but no descriptors available.
  * This means backpressure - consumer isn't keeping up with frame rate.
  */
-static irqreturn_t __maybe_unused pfpga_irq_no_desc(int irq, void *data)
+static irqreturn_t pfpga_irq_no_desc(int irq, void *data)
 {
 	struct phantomfpga_dev *pfdev = data;
 	struct device *dev = &pfdev->pdev->dev;
@@ -449,17 +448,13 @@ static int pfpga_release(struct inode *inode, struct file *file)
 {
 	struct phantomfpga_dev *pfdev = file->private_data;
 
-	/*
-	 * TODO (optional): Decide cleanup policy
-	 *
-	 * Options:
-	 *   A) Stop streaming on close (safer for cleanup)
-	 *   B) Keep streaming until explicit stop (allows multiple readers)
-	 *
-	 * For now, we don't auto-stop. You can decide.
-	 */
+	mutex_lock(&pfdev->ioctl_lock);
+	if (pfpga_stop_streaming(pfdev) != 0) {
+		dev_err(&pfdev->pdev->dev, "Error stopping the stream");
+	}
+	mutex_unlock(&pfdev->ioctl_lock);
 
-	dev_dbg(&pfdev->pdev->dev, "device closed\n");
+	dev_info(&pfdev->pdev->dev, "device closed, stopped streaming\n");
 	return 0;
 }
 
@@ -487,7 +482,9 @@ static ssize_t pfpga_read(struct file *file, char __user *buf,
 	}
 
 	if (!(file->f_flags & O_NONBLOCK)) {
+		dev_info_ratelimited(&pfdev->pdev->dev, "Waiting for wait event, consumer: %d, shadow_tail: %d", pfdev->consumer, pfdev->shadow_tail);
 		ret = wait_event_interruptible(pfdev->wait_queue, pfdev->consumer != pfdev->shadow_tail || !pfdev->streaming);
+		dev_info_ratelimited(&pfdev->pdev->dev, "wokeup from wait");
 		if (ret != 0) {
 			ret = -EINTR;
 			goto err;
@@ -686,6 +683,7 @@ static long pfpga_ioctl(struct file *file, unsigned int cmd, unsigned long arg)
 
 			if (pfdev->streaming) {
 				// Streaming is activated
+				dev_warn(dev, "IOCTL: Failed to configure since streaming is active");
 				ret = -EBUSY;
 				break;
 			}
@@ -757,23 +755,6 @@ static long pfpga_ioctl(struct file *file, unsigned int cmd, unsigned long arg)
 			struct phantomfpga_stats stats;
 			unsigned long flags;
 
-			/*
-			 * TODO: Get statistics
-			 *
-			 * Steps:
-			 *   1. Read device registers:
-			 *      - PHANTOMFPGA_REG_STAT_FRAMES_TX
-			 *      - PHANTOMFPGA_REG_STAT_FRAMES_DROP
-			 *      - PHANTOMFPGA_REG_STAT_BYTES_LO/HI
-			 *      - PHANTOMFPGA_REG_STAT_ERRORS
-			 *      - PHANTOMFPGA_REG_STAT_DESC_COMPL
-			 *      - PHANTOMFPGA_REG_CURRENT_FRAME
-			 *      - PHANTOMFPGA_REG_DESC_HEAD/TAIL
-			 *      - PHANTOMFPGA_REG_STATUS
-			 *   2. Fill stats structure
-			 *   3. Add driver-side stats under lock
-			 *   4. copy_to_user
-			 */
 			memset(&stats, 0, sizeof(stats));
 
 			spin_lock_irqsave(&pfdev->lock, flags);

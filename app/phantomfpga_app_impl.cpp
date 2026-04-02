@@ -130,7 +130,11 @@ protected:
 				printf("Error reading frame: %d: %s\n", errno, strerror(errno));
 				continue;
 			}
-			printf("Read frame\n");
+			if (bytes_read != PHANTOMFPGA_FRAME_SIZE) {
+				printf("Error reading frame, frame is too short, size: %ld", bytes_read);
+				continue;
+			}
+			printf("Read some frame\n");
 			process_frame(frame_buf, bytes_read);
 		}
 	}
@@ -168,7 +172,7 @@ protected:
 			ret = false;
 		}
 		if (config_.validate_crc) {
-			printf("%p , size: %d", frame, frame_size);
+			fprintf(stderr, "%p , size: %d\n", frame, frame_size);
 			const uint32_t crc = CRC32::compute(frame, frame_size - 4);
 			if (crc != *reinterpret_cast<const uint32_t*>((uint8_t*)frame + frame_size - 4)) {
 				stats_.crc_errors++;
@@ -181,23 +185,48 @@ protected:
 		return ret;
 	}
 
-	/*
-	 * TODO: Print statistics
-	 *
-	 * Steps:
-	 * 1. Print app-side stats from stats_ (frames_received, frames_valid,
-	 *    seq_errors, magic_errors, crc_errors)
-	 * 2. If tcp_server_: print network stats (frames_sent, bytes_sent)
-	 * 3. Get device stats: create a struct phantomfpga_stats, call
-	 *    ioctl(dev_fd_.get(), PHANTOMFPGA_IOCTL_GET_STATS, &dev_stats)
-	 *    Print frames_produced, frames_dropped, current_frame
-	 * 4. Calculate and print runtime duration from stats_.start_time
-	 */
 	void print_statistics() override
 	{
-		/* --- YOUR CODE HERE --- */
-		fprintf(stderr, "TODO: Implement print_statistics()\n");
-		/* --- END YOUR CODE --- */
+		/* App-side stats */
+		fprintf(stderr, "\n=== Application Statistics ===\n");
+		fprintf(stderr, "Frames received: %lu\n", stats_.frames_received);
+		fprintf(stderr, "Frames valid: %lu\n", stats_.frames_valid);
+		fprintf(stderr, "Sequence errors: %lu\n", stats_.seq_errors);
+		fprintf(stderr, "Magic errors: %lu\n", stats_.magic_errors);
+		fprintf(stderr, "CRC errors: %lu\n", stats_.crc_errors);
+
+		/* Network stats if TCP server is running */
+		if (tcp_server_) {
+			fprintf(stderr, "\n=== Network Statistics ===\n");
+			fprintf(stderr, "Frames sent: %lu\n", tcp_server_->stats().frames_sent);
+			fprintf(stderr, "Bytes sent: %lu\n", tcp_server_->stats().bytes_sent);
+		}
+
+		/* Device stats */
+		if (dev_fd_.valid()) {
+			struct phantomfpga_stats dev_stats = {};
+			int ret = ioctl(dev_fd_.get(), PHANTOMFPGA_IOCTL_GET_STATS, &dev_stats);
+			if (ret == 0) {
+				fprintf(stderr, "\n=== Device Statistics ===\n");
+				fprintf(stderr, "Frames produced: %llu\n", dev_stats.frames_produced);
+				fprintf(stderr, "Frames dropped: %llu\n", dev_stats.frames_dropped);
+				fprintf(stderr, "Current frame: %u\n", dev_stats.current_frame);
+			}
+		}
+
+		/* Runtime duration */
+		fprintf(stderr, "\n=== Runtime ===\n");
+		struct timespec now;
+		clock_gettime(CLOCK_MONOTONIC, &now);
+		
+		uint64_t elapsed_sec = now.tv_sec - stats_.start_time.tv_sec;
+		int64_t elapsed_nsec = now.tv_nsec - stats_.start_time.tv_nsec;
+		if (elapsed_nsec < 0) {
+			elapsed_sec--;
+			elapsed_nsec += 1000000000;
+		}
+		
+		fprintf(stderr, "Runtime: %lu.%03lu seconds\n", elapsed_sec, elapsed_nsec / 1000000);
 	}
 };
 

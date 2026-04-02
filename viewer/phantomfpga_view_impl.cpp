@@ -37,130 +37,81 @@
 
 class PhantomFpgaViewerImpl : public PhantomFpgaViewer {
 protected:
-
-	/*
-	 * TODO 1: Receive one frame from the server
-	 *
-	 * The wire protocol sends: 4-byte length (network order) + frame data.
-	 *
-	 * Steps:
-	 * 1. Read 4 bytes into a uint32_t using client_.read_exact()
-	 * 2. Convert from network byte order: ntohl()
-	 * 3. Verify the length == frame::SIZE (5120)
-	 * 4. Read frame::SIZE bytes into frame_buffer_.data()
-	 *
-	 * Returns true on success, false on error or disconnect.
-	 *
-	 * Hint: client_.read_exact(buf, len, &running_) handles partial
-	 * reads and EINTR for you.
-	 */
 	bool receive_frame() override
 	{
-		/* --- YOUR CODE HERE --- */
-		fprintf(stderr, "TODO: Implement receive_frame()\n");
-		return false;
-		/* --- END YOUR CODE --- */
+		uint32_t length;
+		if (!client_.read_exact(&length, 4, &running_)) {
+			printf("Could not read the whole len param\n");
+			return false;
+		}
+		length = ntohl(length);
+		if (length != frame::SIZE) {
+			printf("len param is currpted and does match expected. value: %d, expected: %ld\n", length, frame::SIZE);
+			return false;
+		}
+		if (client_.read_exact(frame_buffer_.data(), frame::SIZE, &running_)) {
+			printf("Error reading the whole frame\n");
+			return false;
+		}
+
+		return true;
 	}
 
-	/*
-	 * TODO 2: Validate the frame
-	 *
-	 * Check two things:
-	 * 1. Magic number: cast frame_buffer_.data() to a FrameHeader* and
-	 *    check that hdr->magic == frame::MAGIC
-	 *    Increment stats_.magic_errors on failure.
-	 *
-	 * 2. CRC32: compute CRC32::compute(frame_buffer_.data(), frame::CRC_OFFSET)
-	 *    Compare with the 4-byte CRC stored at frame::CRC_OFFSET
-	 *    (read it as a uint32_t from frame_buffer_[frame::CRC_OFFSET])
-	 *    Increment stats_.crc_errors on mismatch.
-	 *
-	 * Returns true if valid, false otherwise.
-	 */
 	bool validate_frame() override
 	{
-		/* --- YOUR CODE HERE --- */
-		fprintf(stderr, "TODO: Implement validate_frame()\n");
-		return false;
-		/* --- END YOUR CODE --- */
+		const FrameHeader *header = reinterpret_cast<FrameHeader*>(frame_buffer_.data());
+		if (header->magic != frame::MAGIC) {
+			stats_.magic_errors++;
+			return false;
+		}
+		const uint32_t crc_result = CRC32::compute(frame_buffer_.data(), frame::CRC_OFFSET);
+		uint32_t expected_crc;
+		memcpy(&expected_crc, frame_buffer_.data() + frame::CRC_OFFSET, sizeof(uint32_t));
+		if (crc_result != expected_crc) {
+			stats_.crc_errors++;
+			return false;
+		}
+
+		return true;
 	}
 
-	/*
-	 * TODO 3: Check sequence continuity
-	 *
-	 * Detect dropped frames by looking at sequence number gaps.
-	 *
-	 * Steps:
-	 * 1. Get the sequence number from the FrameHeader
-	 * 2. If this isn't the first frame (stats_.last_sequence != -1):
-	 *    a. Calculate expected = (stats_.last_sequence + 1) % frame::COUNT
-	 *    b. If current != expected:
-	 *       dropped = (current - expected + frame::COUNT) % frame::COUNT
-	 *       stats_.frames_dropped += dropped
-	 * 3. Update stats_.last_sequence
-	 */
 	void check_sequence() override
 	{
-		/* --- YOUR CODE HERE --- */
-		fprintf(stderr, "TODO: Implement check_sequence()\n");
-		/* --- END YOUR CODE --- */
+		const FrameHeader *header = reinterpret_cast<FrameHeader*>(frame_buffer_.data());
+		if (stats_.last_sequence != -1) return;
+
+		const uint32_t expected_seq = (stats_.last_sequence + 1) % frame::COUNT;
+		if (header->sequence != expected_seq) {
+			const uint32_t dropped = (header->sequence - expected_seq + frame::COUNT) % frame::COUNT;
+			stats_.frames_dropped += dropped;
+		}
+		stats_.last_sequence = header->sequence;
 	}
 
-	/*
-	 * TODO 4: Display the frame
-	 *
-	 * The ASCII frame data starts at frame::DATA_OFFSET (16 bytes in)
-	 * and is frame::DATA_SIZE (4995) bytes long. It already contains
-	 * newlines separating the rows -- just dump it to stdout.
-	 *
-	 * Steps:
-	 * 1. Move cursor to top-left: terminal_.cursor_home()
-	 * 2. Write the frame data: fwrite() from frame_buffer_ + DATA_OFFSET
-	 * 3. Flush stdout: fflush(stdout)
-	 */
 	void display_frame() override
 	{
-		/* --- YOUR CODE HERE --- */
-		fprintf(stderr, "TODO: Implement display_frame()\n");
-		/* --- END YOUR CODE --- */
+		terminal_.cursor_home();
+		fwrite(frame_buffer_.data() + frame::DATA_OFFSET, 1, frame::DATA_SIZE, stdout);
+		fflush(stdout);
 	}
 
-	/*
-	 * TODO 5: Frame rate delay
-	 *
-	 * Sleep for 1/fps seconds to maintain the target frame rate.
-	 *
-	 * Steps:
-	 * 1. Calculate delay: 1000000000 / frame::DEFAULT_FPS nanoseconds
-	 * 2. Use nanosleep() with a struct timespec
-	 *
-	 * Example:
-	 *   struct timespec ts = { 0, 1000000000 / frame::DEFAULT_FPS };
-	 *   nanosleep(&ts, nullptr);
-	 */
 	void frame_delay() override
 	{
-		/* --- YOUR CODE HERE --- */
-		usleep(1000000 / frame::DEFAULT_FPS); /* placeholder */
-		/* --- END YOUR CODE --- */
+		struct timespec ts = {0, 1000000000 / frame::DEFAULT_FPS };
+		nanosleep(&ts, nullptr);
 	}
 
-	/*
-	 * TODO 6: Print statistics
-	 *
-	 * Print a summary of what happened. Include:
-	 * - stats_.frames_received
-	 * - stats_.frames_dropped
-	 * - stats_.crc_errors
-	 * - stats_.magic_errors
-	 *
-	 * Use fprintf(stderr, ...) so it doesn't interfere with the display.
-	 */
 	void print_stats() override
 	{
-		/* --- YOUR CODE HERE --- */
-		fprintf(stderr, "TODO: Implement print_stats()\n");
-		/* --- END YOUR CODE --- */
+		fprintf(stderr,
+            "Frames received: %lu\n"
+            "Frames dropped: %lu\n"
+            "CRC errors: %lu\n"
+            "Magic errors: %lu\n",
+            stats_.frames_received,
+            stats_.frames_dropped,
+            stats_.crc_errors,
+            stats_.magic_errors);
 	}
 
 	/*
