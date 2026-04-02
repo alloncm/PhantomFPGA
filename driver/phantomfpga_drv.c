@@ -292,29 +292,14 @@ static int pfpga_start_streaming(struct phantomfpga_dev *pfdev)
  */
 static int pfpga_stop_streaming(struct phantomfpga_dev *pfdev)
 {
-	/*
-	 * TODO: Stop the device streaming
-	 *
-	 * Steps:
-	 *   1. Read current CTRL register value
-	 *   2. Clear PHANTOMFPGA_CTRL_RUN bit
-	 *   3. Write back to CTRL register
-	 *   4. Set pfdev->streaming = false
-	 *   5. Wake up any waiters (they'll get EOF or EAGAIN)
-	 *   6. Return 0
-	 *
-	 * Note: It's safe to call stop even if not streaming
-	 *
-	 * Locking: Called with ioctl_lock held
-	 */
-
+	// Locking: Called with ioctl_lock held
 	u32 ctrl_reg = pfpga_read32(pfdev, PHANTOMFPGA_REG_CTRL);
 	ctrl_reg = ctrl_reg & (~PHANTOMFPGA_CTRL_RUN);
 	pfpga_write32(pfdev, PHANTOMFPGA_REG_CTRL, ctrl_reg);
 
 	pfdev->streaming = false;
 
-	// TODO: Wakeup any waiters, not implemented right now
+	wake_up_interruptible(&pfdev->wait_queue);
 
 	return 0;
 }
@@ -324,16 +309,18 @@ static int pfpga_stop_streaming(struct phantomfpga_dev *pfdev)
  */
 static void pfpga_soft_reset(struct phantomfpga_dev *pfdev)
 {
-	/*
-	 * TODO: Trigger soft reset
-	 *
-	 * Steps:
-	 *   1. Write PHANTOMFPGA_CTRL_RESET to CTRL register
-	 *   2. The reset bit is self-clearing - wait briefly (udelay(10))
-	 *   3. Reset local state: streaming=false, all indices=0 (including consumer)
-	 *
-	 * Note: Reset clears all device state including statistics
-	 */
+	mutex_lock(&pfdev->ioctl_lock);
+	pfpga_write32(pfdev, PHANTOMFPGA_REG_CTRL, PHANTOMFPGA_CTRL_RESET);
+
+	pfdev->streaming = false;
+	pfdev->consumer = 0;
+	pfdev->shadow_tail = 0;
+	pfdev->bytes_consumed = 0;
+	pfdev->frames_consumed = 0;
+	pfdev->crc_errors = 0;
+	pfdev->irq_count = 0;
+
+	mutex_unlock(&pfdev->ioctl_lock);
 }
 
 /* ------------------------------------------------------------------------ */
@@ -437,7 +424,9 @@ static int pfpga_open(struct inode *inode, struct file *file)
 	pfdev = container_of(inode->i_cdev, struct phantomfpga_dev, cdev);
 	file->private_data = pfdev;
 
-	dev_dbg(&pfdev->pdev->dev, "device opened\n");
+	pfpga_soft_reset(pfdev);
+
+	dev_info(&pfdev->pdev->dev, "device opened\n");
 	return 0;
 }
 
@@ -500,12 +489,14 @@ static ssize_t pfpga_read(struct file *file, char __user *buf,
 
 	// Nothing to consume
 	if (head == tail) {
+		dev_warn_ratelimited(&pfdev->pdev->dev, "No frame to consume");
 		ret = -EAGAIN;
 		goto err;
 	}
 
 	desc = &pfdev->desc_ring[head];
-	if (desc->control & PHANTOMFPGA_DESC_CTRL_COMPLETED) {
+	if ((desc->control & PHANTOMFPGA_DESC_CTRL_COMPLETED) == 0) {
+		dev_warn_ratelimited(&pfdev->pdev->dev, "Frame is not completed");
 		ret = -EAGAIN;
 		goto err;
 	}
@@ -584,10 +575,22 @@ static __poll_t pfpga_poll(struct file *file, poll_table *wait)
 	 *   4. Return mask
 	 */
 
-	(void)flags;
-	(void)head;
-	(void)tail;
+	// Register as pollfd
 	poll_wait(file, &pfdev->wait_queue, wait);
+
+	// Read state
+	spin_lock_irqsave(&pfdev->lock, flags);
+	head = pfdev->consumer;
+	tail = pfdev->shadow_tail;
+	spin_unlock_irqrestore(&pfdev->lock, flags);
+
+	// Set return mask
+	if (tail != head) {
+		mask |= EPOLLIN | EPOLLRDNORM;
+	}
+	if (!pfdev->streaming) {
+		mask |= EPOLLHUP;
+	}
 
 	return mask;
 }

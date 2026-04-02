@@ -100,24 +100,6 @@ protected:
 		return 0;
 	}
 
-	/*
-	 * TODO: Main processing loop
-	 *
-	 * This is the heart of the application. Loop while running_ is true:
-	 *
-	 * 1. If tcp_server_ exists, call tcp_server_->try_accept()
-	 * 2. Use poll() on dev_fd_.get() with POLLIN, timeout ~100ms
-	 * 3. If poll returns data ready:
-	 *    a. Read a frame: read(dev_fd_.get(), buf, PHANTOMFPGA_FRAME_SIZE)
-	 *    b. Call process_frame(buf, bytes_read) for each frame
-	 * 4. Optionally print periodic stats (every few seconds)
-	 *
-	 * Hint: Use a stack buffer for the frame:
-	 *   uint8_t frame_buf[PHANTOMFPGA_FRAME_SIZE];
-	 *
-	 * Hint: struct pollfd pfd = { dev_fd_.get(), POLLIN, 0 };
-	 *       int ret = poll(&pfd, 1, 100);
-	 */
 	void main_loop() override
 	{
 		while (running_) {
@@ -125,8 +107,22 @@ protected:
 				tcp_server_->try_accept();
 
 			uint8_t frame_buf[PHANTOMFPGA_FRAME_SIZE];
+			struct pollfd pfd = {
+				.fd = dev_fd_.get(),
+				.events = POLLIN,
+				.revents = 0
+			};
+			int poll_res = poll(&pfd, 1, 100);
+			if (0 == poll_res) {
+				// poll timeout
+				continue;
+			}
+			if (0 > poll_res) {
+				printf("Error polling: %s\n", strerror(errno));
+				continue;
+			}
 			ssize_t bytes_read = read(dev_fd_.get(), frame_buf, PHANTOMFPGA_FRAME_SIZE);
-			if (bytes_read < 0) {
+			if (0 > bytes_read) {
 				printf("Error reading frame: %d: %s\n", errno, strerror(errno));
 				continue;
 			}
