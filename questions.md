@@ -4,3 +4,6 @@
 4. How does the device knows the next descriptor if we set the next address to zero? - Maybe it uses the pointer of desc_ring and run over it untill head  
 5. Why handle MSI-X not avaliable if this is a sandbox task we know MSI-X will work?
 6. What desc_tail used for if we have tail_shadow?
+7. In mmap does the pgprot call before the `dma_mmap_coherent` is required or redundant?
+8. In mmap mode how do I know which frame do I start from? (Can I assume this is the first frame of the buffer?)
+9. dma_mmap_coherent cacn even work? I used the `remap_pfn_range` since I couldnt make the `dma_mmap_coherent` work

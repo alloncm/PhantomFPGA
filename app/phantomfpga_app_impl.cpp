@@ -63,27 +63,17 @@ protected:
 		return 0;
 	}
 
-	/*
-	 * TODO: Set up memory-mapped DMA buffers
-	 *
-	 * Steps:
-	 * 1. Create a struct phantomfpga_buffer_info (zero-init)
-	 * 2. Call ioctl(dev_fd_.get(), PHANTOMFPGA_IOCTL_GET_BUFFER_INFO, &info)
-	 * 3. Store info.buffer_size in config_.buffer_size
-	 * 4. Call mmap():
-	 *      void* addr = mmap(nullptr, info.total_size, PROT_READ,
-	 *                        MAP_SHARED, dev_fd_.get(), 0);
-	 * 5. Store the result: buffer_pool_ = MappedMemory(addr, info.total_size);
-	 *
-	 * After this, buffer_pool_.get() points to the DMA buffer pool.
-	 * Frame N starts at: (uint8_t*)buffer_pool_.get() + N * config_.buffer_size
-	 */
 	int setup_mmap() override
 	{
-		/* --- YOUR CODE HERE --- */
-		fprintf(stderr, "TODO: Implement setup_mmap()\n");
-		return -1;
-		/* --- END YOUR CODE --- */
+		phantomfpga_buffer_info info = {};
+		int ret = ::ioctl(dev_fd_.get(), PHANTOMFPGA_IOCTL_GET_BUFFER_INFO, &info);
+		if (ret < 0) return -errno;
+		config_.buffer_size = info.buffer_size;
+
+		void *addr = ::mmap(nullptr, info.total_size, PROT_READ, MAP_SHARED, dev_fd_.get(), 0);
+		if (nullptr == addr || MAP_FAILED == addr) return -errno;
+		buffer_pool_ = MappedMemory(addr, info.total_size);
+		return 0;
 	}
 
 	int start_streaming() override
@@ -102,11 +92,11 @@ protected:
 
 	void main_loop() override
 	{
+		unsigned int desc_index = 0;
 		while (running_) {
 			if (tcp_server_)
 				tcp_server_->try_accept();
 
-			uint8_t frame_buf[PHANTOMFPGA_FRAME_SIZE];
 			struct pollfd pfd = {
 				.fd = dev_fd_.get(),
 				.events = POLLIN,
@@ -121,17 +111,31 @@ protected:
 				printf("Error polling: %s\n", strerror(errno));
 				continue;
 			}
-			ssize_t bytes_read = read(dev_fd_.get(), frame_buf, PHANTOMFPGA_FRAME_SIZE);
-			if (0 > bytes_read) {
-				printf("Error reading frame: %d: %s\n", errno, strerror(errno));
+
+			uint8_t frame_buf[PHANTOMFPGA_FRAME_SIZE];
+
+			const uint8_t *buffer = (uint8_t*)buffer_pool_.get() + desc_index * config_.buffer_size;
+			const phantomfpga_completion *completion = (phantomfpga_completion*)(buffer + PHANTOMFPGA_FRAME_SIZE);
+			const phantomfpga_frame_header *header = (phantomfpga_frame_header*)(buffer);
+			const uint32_t bytes_read = completion->actual_length;
+			if (PHANTOMFPGA_FRAME_MAGIC != header->magic) {
+				printf("Error: magic is not detecetd: %d\n", desc_index);
+				goto inc;
+			}
+			if (PHANTOMFPGA_COMPL_OK != completion->status) {
+				printf("Error, frame is not complete yet\n");
 				continue;
 			}
-			if (bytes_read != PHANTOMFPGA_FRAME_SIZE) {
-				printf("Error reading frame, frame is too short, size: %ld\n", bytes_read);
+			if (PHANTOMFPGA_FRAME_SIZE != bytes_read) {
+				printf("Error reading frame, frame is too short, size: %d, index: %d\n", bytes_read, desc_index);
 				continue;
 			}
-			printf("Read some frame\n");
+			memcpy(frame_buf, buffer, bytes_read);
+			printf("Read some frame: %d\n", desc_index);
 			process_frame(frame_buf, bytes_read);
+		inc:
+			ioctl(this->dev_fd_.get(), PHANTOMFPGA_IOCTL_CONSUME_FRAME);
+			desc_index = (desc_index + 1) % PHANTOMFPGA_FRAME_COUNT;
 		}
 	}
 

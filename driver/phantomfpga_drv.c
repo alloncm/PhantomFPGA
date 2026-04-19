@@ -39,6 +39,7 @@
 #include <linux/spinlock.h>
 #include <linux/crc32.h>
 #include <linux/delay.h>
+#include <linux/dma-direct.h>
 
 #include "phantomfpga_regs.h"
 #include "phantomfpga_uapi.h"
@@ -345,7 +346,7 @@ static irqreturn_t pfpga_irq_complete(int irq, void *data)
 		return IRQ_NONE;
 	}
 
-	dev_info_ratelimited(dev, "Got irq complete event");
+	dev_dbg_ratelimited(dev, "Got irq complete event");
 	pfpga_write32(pfdev, PHANTOMFPGA_REG_IRQ_STATUS, PHANTOMFPGA_IRQ_COMPLETE);
 	spin_lock(&pfdev->lock);
 	pfdev->shadow_tail = pfpga_read32(pfdev, PHANTOMFPGA_REG_DESC_TAIL);
@@ -447,6 +448,41 @@ static int pfpga_release(struct inode *inode, struct file *file)
 	return 0;
 }
 
+
+static void pfpga_consume_frame(struct phantomfpga_dev *pfdev, u32 head, u64 bytes_consumed)
+{
+	unsigned long flags;
+
+	pfdev->desc_ring[head].control = 0;
+
+	spin_lock_irqsave(&pfdev->lock, flags);
+	pfdev->consumer = (head + 1) & (pfdev->desc_count - 1);
+	pfdev->frames_consumed++;
+	pfdev->bytes_consumed += bytes_consumed;
+	spin_unlock_irqrestore(&pfdev->lock, flags);
+
+	pfpga_submit_descriptors(pfdev, 1);
+}
+
+/*
+ * Checks for new descs to consume.
+ * returns the head if avalibale, else returns -1
+ */
+static u32 pfpga_check_desc_to_consume(struct phantomfpga_dev *pfdev)
+{
+	unsigned long flags;
+
+	spin_lock_irqsave(&pfdev->lock, flags);
+	u32 head = pfdev->consumer;
+	u32 tail = pfdev->shadow_tail;
+	spin_unlock_irqrestore(&pfdev->lock, flags);
+
+	if (head == tail) {
+		return -1;
+	}
+	return head;
+}
+
 /*
  * Read frames from the device.
  *
@@ -457,8 +493,7 @@ static ssize_t pfpga_read(struct file *file, char __user *buf,
 			  size_t count, loff_t *ppos)
 {
 	struct phantomfpga_dev *pfdev = file->private_data;
-	unsigned long flags;
-	u32 head, tail;
+	u32 head;
 	struct phantomfpga_sg_desc *desc;
 	struct phantomfpga_completion *compl;
 	void *buffer;
@@ -482,13 +517,9 @@ static ssize_t pfpga_read(struct file *file, char __user *buf,
 		if (!pfdev->streaming) return 0;
 	}
 
-	spin_lock_irqsave(&pfdev->lock, flags);
-	head = pfdev->consumer;
-	tail = pfdev->shadow_tail;
-	spin_unlock_irqrestore(&pfdev->lock, flags);
-
+	head = pfpga_check_desc_to_consume(pfdev);
 	// Nothing to consume
-	if (head == tail) {
+	if (-1 == head) {
 		dev_warn_ratelimited(&pfdev->pdev->dev, "No frame to consume");
 		ret = -EAGAIN;
 		goto err;
@@ -502,7 +533,7 @@ static ssize_t pfpga_read(struct file *file, char __user *buf,
 	}
 
 	buffer = pfdev->buffers[head].vaddr;
-	compl = phantomfpga_completion_ptr(buffer, pfdev->buffer_size);
+	compl = phantomfpga_completion_ptr(buffer, PHANTOMFPGA_BUFFER_SIZE);
 	if (compl->status != PHANTOMFPGA_COMPL_OK){
 		dev_warn(&pfdev->pdev->dev, "Completion buffer status: 0x%x", compl->status);
 	}
@@ -517,15 +548,7 @@ static ssize_t pfpga_read(struct file *file, char __user *buf,
 		goto err;
 	}
 
-	desc->control = 0;
-
-	spin_lock_irqsave(&pfdev->lock, flags);
-	pfdev->consumer = (head + 1) & (pfdev->desc_count - 1);
-	pfdev->frames_consumed++;
-	pfdev->bytes_consumed += to_copy;
-	spin_unlock_irqrestore(&pfdev->lock, flags);
-
-	pfpga_submit_descriptors(pfdev, 1);
+	pfpga_consume_frame(pfdev, head, to_copy);
 
 	return to_copy;
 err:
@@ -606,42 +629,48 @@ static int pfpga_mmap(struct file *file, struct vm_area_struct *vma)
 	struct phantomfpga_dev *pfdev = file->private_data;
 	size_t size = vma->vm_end - vma->vm_start;
 	unsigned long offset = vma->vm_pgoff << PAGE_SHIFT;
+	struct device *dev = &pfdev->pdev->dev;
 
-	/*
-	 * TODO: Implement mmap support for SG-DMA buffers
-	 *
-	 * The mmap layout allows mapping individual descriptor buffers
-	 * or the entire buffer pool. Offset determines which buffer(s).
-	 *
-	 * Simple approach: Map all buffers as one contiguous region
-	 *
-	 * Steps:
-	 *   1. Validate request:
-	 *      - Check pfdev->configured is true
-	 *      - Check offset == 0 (we only support mapping from start)
-	 *      - Check size <= desc_count * buffer_size
-	 *
-	 *   2. Set page protection:
-	 *      vma->vm_page_prot = pgprot_noncached(vma->vm_page_prot);
-	 *
-	 *   3. Map each buffer page:
-	 *      For each buffer, use remap_pfn_range() or dma_mmap_coherent()
-	 *
-	 *   4. Set VM flags:
-	 *      vm_flags_set(vma, VM_IO | VM_DONTEXPAND | VM_DONTDUMP);
-	 *
-	 *   5. Return 0 on success
-	 *
-	 * Note: For simplicity, the skeleton allocates buffers as one
-	 * large coherent region. Mapping is straightforward in that case.
-	 */
+	int ret = 0;
+	if (!pfdev->configured) {
+		ret = -EINVAL;
+		goto err;
+	}
+	if (offset != 0) {
+		ret = -EFAULT;
+		goto err;
+	}
+	if (size > pfdev->desc_count * pfdev->buffer_size) {
+		ret = -ENOMEM;
+		goto err;
+	}
 
-	(void)size;
-	(void)offset;
-	dev_dbg(&pfdev->pdev->dev, "mmap request: size=%zu offset=%lu\n",
+	vm_flags_set(vma, VM_IO | VM_DONTEXPAND | VM_DONTDUMP);
+	vma->vm_page_prot = pgprot_noncached(vma->vm_page_prot);
+
+	unsigned long cursor = vma->vm_start;
+	for (int i = 0; i < pfdev->desc_count; i++) {
+		struct phantomfpga_buffer *buffer = &pfdev->buffers[i];
+		// buffer_size is page aligned - safe to use it here
+		unsigned long page_frame_number = PHYS_PFN(dma_to_phys(dev, buffer->dma_addr));
+
+		int ret = remap_pfn_range(vma, cursor, page_frame_number, buffer->size, vma->vm_page_prot);
+		
+		if (0 != ret) {
+			ret = -EIO;
+			// No need to free resources as far as I understands
+			goto err;
+		}
+		cursor += pfdev->buffer_size;
+	}
+
+	dev_info(dev, "mmap request: size=%zu offset=%lu\n",
 		size, offset);
 
-	return -ENOTSUPP;
+	return 0;
+err:
+	dev_err(dev, "ERROR: invalid mmap call: %d: %pe", ret, ERR_PTR(ret));
+	return ret;
 }
 
 // Forward declare for the ioctl method
@@ -815,26 +844,11 @@ static long pfpga_ioctl(struct file *file, unsigned int cmd, unsigned long arg)
 
 	case PHANTOMFPGA_IOCTL_CONSUME_FRAME:
 		{
-			unsigned long flags;
-
-			/*
-			 * TODO: Mark frame consumed (mmap mode)
-			 *
-			 * Used when userspace reads directly from mmap'd buffer
-			 * and signals completion via ioctl instead of read().
-			 *
-			 * Steps:
-			 *   1. spin_lock_irqsave
-			 *   2. Check if there are completed descriptors
-			 *   3. Reset descriptor for reuse
-			 *   4. Advance consumer
-			 *   5. Increment frames_consumed
-			 *   6. spin_unlock_irqrestore
-			 *   7. Resubmit one descriptor
-			 *   8. Return 0
-			 */
-			(void)flags;
-			ret = -ENOTSUPP;
+			// All locking takes place inside the functions
+			u32 head = pfpga_check_desc_to_consume(pfdev);
+			if (-1 != head) {
+				pfpga_consume_frame(pfdev, head, PHANTOMFPGA_BUFFER_SIZE);
+			}
 		}
 		break;
 
@@ -1191,7 +1205,7 @@ static int phantomfpga_probe(struct pci_dev *pdev,
 	pfdev->frame_rate = PHANTOMFPGA_DEFAULT_FRAME_RATE;
 	pfdev->irq_coalesce_count = PHANTOMFPGA_DEFAULT_IRQ_COUNT;
 	pfdev->irq_coalesce_timeout = PHANTOMFPGA_DEFAULT_IRQ_TIMEOUT;
-	pfdev->buffer_size = PHANTOMFPGA_BUFFER_SIZE;
+	pfdev->buffer_size = PAGE_ALIGN(PHANTOMFPGA_BUFFER_SIZE);
 	pfdev->configured = false;
 	pfdev->streaming = false;
 

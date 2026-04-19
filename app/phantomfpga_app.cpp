@@ -307,12 +307,12 @@ int PhantomFpgaApp::run(int argc, char* argv[])
 		return 1;
 	}
 
-	// ret = setup_mmap();
-	// if (ret < 0) {
-	// 	fprintf(stderr, "Error: failed to setup mmap (%d)\n", ret);
-	// 	cleanup();
-	// 	return 1;
-	// }
+	ret = setup_mmap();
+	if (ret < 0) {
+		fprintf(stderr, "Error: failed to setup mmap (%d)\n", ret);
+		cleanup();
+		return 1;
+	}
 
 	ret = start_streaming();
 	if (ret < 0) {
